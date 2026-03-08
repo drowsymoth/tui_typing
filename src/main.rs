@@ -1,42 +1,44 @@
-// ANCHOR: imports
-// use rand::Rng;
 use rand::prelude::*;
+use std::cmp::max;
+use std::time::Instant;
 use std::{io, vec};
 
 use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 use ratatui::{
-    DefaultTerminal, Frame,
     buffer::Buffer,
     layout::{Constraint, Direction, Layout, Rect},
     style::{Color, Style, Stylize},
     symbols::border,
     text::{Line, Span, Text},
     widgets::{Block, Paragraph, Widget, Wrap},
+    DefaultTerminal, Frame,
 };
-// ANCHOR_END: imports
 
 fn main() -> io::Result<()> {
     ratatui::run(|terminal| App::default().run(terminal))
 }
 
-// ANCHOR: app
 #[derive(Debug, Default)]
 pub struct App {
     user_input: Vec<String>,
-    errors: usize,
     target: Vec<String>,
+    start_time: Option<Instant>,
+    correct: usize,
+    errors: usize,
     words_count: usize,
     current_word: usize,
     exit: bool,
+    width: u16,
+    height: u16,
 }
-// ANCHOR_END: app
 
-// ANCHOR: impl App
 impl App {
-    /// runs the application's main loop until the user quits
     pub fn run(&mut self, terminal: &mut DefaultTerminal) -> io::Result<()> {
-        self.words_count = 1000;
+        self.words_count = 100;
         self.current_word = 0;
+        self.user_input.push("".to_string());
+        self.width = 100;
+        self.height = 5;
 
         let dict = vec![
             "the", "be", "of", "and", "a", "to", "in", "he", "have", "it", "that", "for", "they",
@@ -79,11 +81,8 @@ impl App {
         frame.render_widget(self, frame.area());
     }
 
-    /// updates the application's state based on user input
     fn handle_events(&mut self) -> io::Result<()> {
         match event::read()? {
-            // it's important to check that the event is a key press event as
-            // crossterm also emits key release and repeat events on Windows.
             Event::Key(key_event) if key_event.kind == KeyEventKind::Press => {
                 self.handle_key_event(key_event)
             }
@@ -92,7 +91,6 @@ impl App {
         Ok(())
     }
 
-    // ANCHOR: handle_key_event fn
     fn handle_key_event(&mut self, key_event: KeyEvent) {
         match key_event.code {
             KeyCode::Char(' ') => self.next_word(),
@@ -108,9 +106,11 @@ impl App {
             _ => {}
         }
     }
-    // ANCHOR_END: handle_key_event fn
+
     fn next_word(&mut self) {
-        if !self.user_input[self.current_word].is_empty() {
+        if !self.user_input[self.current_word].is_empty()
+            && self.words_count - 1 != self.current_word
+        {
             if self.user_input[self.current_word].chars().count()
                 < self.target[self.current_word].chars().count()
             {
@@ -122,11 +122,10 @@ impl App {
     }
 
     fn add_char(&mut self, input: char) {
-        if self.user_input.len() > self.current_word {
-            self.user_input[self.current_word].push(input);
-        } else {
-            self.user_input.push(input.to_string());
+        if self.is_end() {
+            return;
         }
+        self.user_input[self.current_word].push(input);
 
         match self.target[self.current_word]
             .chars()
@@ -139,6 +138,12 @@ impl App {
             }
             None => self.error_incr(),
         }
+
+        match self.start_time {
+            None => self.set_start_time(),
+            _ => {}
+        }
+        self.correct = self.check_correct();
     }
 
     fn delete_char(&mut self) {
@@ -170,46 +175,7 @@ impl App {
         self.errors += 1;
     }
 
-    fn exit(&mut self) {
-        self.exit = true;
-    }
-
-    fn compare(&mut self) {}
-}
-// ANCHOR_END: impl App
-
-// ANCHOR: impl Widget
-impl Widget for &App {
-    fn render(self, area: Rect, buf: &mut Buffer) {
-        let title = Line::from(" Suffer Fag ".bold());
-        let instructions = Line::from(vec![
-            " Errors: ".into(),
-            self.errors.to_string().into(),
-            " ".into(),
-        ]);
-        let block = Block::bordered()
-            .title(title.centered())
-            .title_bottom(instructions.centered())
-            .border_set(border::THICK);
-
-        let layout_v = Layout::default()
-            .direction(Direction::Vertical)
-            .constraints([
-                Constraint::Fill(1),
-                Constraint::Length(10),
-                Constraint::Fill(1),
-            ])
-            .split(area);
-
-        let layout_h = Layout::default()
-            .direction(Direction::Horizontal)
-            .constraints([
-                Constraint::Fill(1),
-                Constraint::Length(100),
-                Constraint::Fill(1),
-            ])
-            .split(layout_v[1]);
-
+    fn check_display(&self) -> Vec<Span> {
         let mut spans: Vec<Span> = Vec::new();
         for (idx, (ts, us)) in self.target.iter().zip(&self.user_input).enumerate() {
             for (tc, uc) in ts.chars().zip(us.chars()) {
@@ -225,7 +191,7 @@ impl Widget for &App {
                     ));
                 }
             }
-            for tc in ts.chars().skip(us.len()) {
+            for tc in ts.chars().skip(us.chars().count()) {
                 if idx == self.current_word {
                     spans.push(Span::styled(
                         tc.to_string(),
@@ -238,7 +204,7 @@ impl Widget for &App {
                     ));
                 }
             }
-            for uc in us.chars().skip(ts.len()) {
+            for uc in us.chars().skip(ts.chars().count()) {
                 spans.push(Span::styled(
                     uc.to_string(),
                     Style::default().fg(Color::Red),
@@ -257,11 +223,147 @@ impl Widget for &App {
             spans.push(Span::styled(" ".to_string(), Style::default()));
         }
         spans.pop();
-        Paragraph::new(Text::from(Line::from(spans)))
+
+        return spans;
+    }
+
+    fn check_correct(&self) -> usize {
+        let mut counter: usize = 0;
+        for (ts, us) in self.target.iter().zip(&self.user_input) {
+            for (tc, uc) in ts.chars().zip(us.chars()) {
+                if tc == uc {
+                    counter += 1;
+                }
+            }
+        }
+        counter
+    }
+
+    fn get_cur_pos(&self) -> u16 {
+        let mut counter_words = 0;
+        let mut counter_lines = 0;
+        let limit: usize = (self.width - 2) as usize;
+        for i in 0..=self.current_word {
+            let max_len = max(
+                self.target[i].chars().count(),
+                self.user_input[i].chars().count(),
+            );
+            if counter_words + max_len > limit {
+                counter_lines += 1;
+                counter_words = max_len + 1;
+            } else {
+                counter_words += max_len;
+                match self.target.get(i + 1) {
+                    Some(s) => {
+                        if counter_words + s.chars().count() < limit {
+                            counter_words += 1;
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }
+        counter_lines
+    }
+
+    fn is_end(&self) -> bool {
+        if self.user_input[self.current_word].chars().count()
+            < self.target[self.current_word].chars().count()
+        {
+            return false;
+        }
+        let mut counter_words = 0;
+        let limit: usize = (self.width - 2) as usize;
+        for i in 0..=self.current_word {
+            let max_len = max(
+                self.target[i].chars().count(),
+                self.user_input[i].chars().count(),
+            );
+            if counter_words + max_len > limit {
+                counter_words = max_len + 1;
+            } else {
+                counter_words += max_len;
+                match self.target.get(i + 1) {
+                    Some(s) => {
+                        if counter_words + s.chars().count() < limit {
+                            counter_words += 1;
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }
+        counter_words >= (self.width - 2) as usize
+    }
+
+    fn set_start_time(&mut self) {
+        self.start_time = Some(Instant::now());
+    }
+
+    fn exit(&mut self) {
+        self.exit = true;
+    }
+}
+
+impl Widget for &App {
+    fn render(self, area: Rect, buf: &mut Buffer) {
+        let title = Line::from(" Suffer Fag ".bold());
+        let mut wpm = 0;
+        match self.start_time {
+            Some(t) => {
+                let elapsed = t.elapsed().as_secs_f32();
+                wpm = (self.correct as f32 / 5.0 / (elapsed / 60.0)) as i32;
+            }
+            None => {}
+        }
+        let mut accur = 0;
+        if self.current_word > self.errors {
+            accur = ((self.correct - self.errors) as f32 * 100.0 / self.correct as f32) as i32;
+        }
+        let instructions = Line::from(vec![
+            " WPM: ".into(),
+            wpm.to_string().into(),
+            " ".into(),
+            " Accuracy: ".into(),
+            accur.to_string().into(),
+            " ".into(),
+            self.get_cur_pos().to_string().into(),
+            " ".into(),
+            self.user_input[self.current_word].to_string().into(),
+        ]);
+        let block = Block::bordered()
+            .title(title.centered())
+            .title_bottom(instructions.centered())
+            .border_set(border::THICK);
+
+        let layout_v = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([
+                Constraint::Fill(1),
+                Constraint::Length(self.height),
+                Constraint::Fill(1),
+            ])
+            .split(area);
+
+        let layout_h = Layout::default()
+            .direction(Direction::Horizontal)
+            .constraints([
+                Constraint::Fill(1),
+                Constraint::Length(self.width),
+                Constraint::Fill(1),
+            ])
+            .split(layout_v[1]);
+
+        let mut scroll_v = self.get_cur_pos();
+        if scroll_v > 0 {
+            scroll_v -= 1;
+        }
+
+        Paragraph::new(Text::from(Line::from(self.check_display())))
             .wrap(Wrap { trim: true })
+            .scroll((scroll_v, 0))
             .left_aligned()
             .block(block)
             .render(layout_h[1], buf);
     }
 }
-// ANCHOR_END: impl Widget
