@@ -1,6 +1,6 @@
 use rand::prelude::*;
 use std::cmp::max;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 use std::{io, vec};
 
 use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
@@ -8,9 +8,9 @@ use ratatui::{
     buffer::Buffer,
     layout::{Constraint, Direction, Layout, Rect},
     style::{Color, Style, Stylize},
-    symbols::border,
+    symbols::{self, border, Marker},
     text::{Line, Span, Text},
-    widgets::{Block, Paragraph, Widget, Wrap},
+    widgets::{Block, Chart, Dataset, Paragraph, Widget, Wrap},
     DefaultTerminal, Frame,
 };
 
@@ -18,18 +18,33 @@ fn main() -> io::Result<()> {
     ratatui::run(|terminal| App::default().run(terminal))
 }
 
+#[derive(Default, Debug)]
+enum State {
+    #[default]
+    Menu,
+    Typing,
+    GameStats,
+    AllStats,
+}
+
+// struct error {
+//     time: Option<Instant>,
+// }
+
 #[derive(Debug, Default)]
 pub struct App {
     user_input: Vec<String>,
     target: Vec<String>,
     start_time: Option<Instant>,
     correct: usize,
-    errors: usize,
+    wpm: Vec<f32>,
+    errors: Vec<f32>,
     words_count: usize,
     current_word: usize,
     exit: bool,
     width: u16,
     height: u16,
+    state: State,
 }
 
 impl App {
@@ -70,9 +85,24 @@ impl App {
                 .push((**dict.choose(&mut rng).unwrap()).to_string());
         }
 
+        let fps = 10;
+        let tick_rate = Duration::from_millis(1000 / fps);
+        let mut last_tick = Instant::now();
         while !self.exit {
             terminal.draw(|frame| self.draw(frame))?;
-            self.handle_events()?;
+
+            let timeout = tick_rate
+                .checked_sub(last_tick.elapsed())
+                .unwrap_or(Duration::ZERO);
+
+            if crossterm::event::poll(timeout)? {
+                self.handle_events()?;
+            }
+
+            if last_tick.elapsed() >= tick_rate {
+                // app.update(); // timer logic
+                last_tick = Instant::now();
+            }
         }
         Ok(())
     }
@@ -172,7 +202,12 @@ impl App {
     }
 
     fn error_incr(&mut self) {
-        self.errors += 1;
+        match self.start_time {
+            Some(t) => {
+                self.errors.push(t.elapsed().as_secs_f32());
+            }
+            None => {}
+        }
     }
 
     fn check_display(&self) -> Vec<Span> {
@@ -303,39 +338,42 @@ impl App {
     fn exit(&mut self) {
         self.exit = true;
     }
-}
 
-impl Widget for &App {
-    fn render(self, area: Rect, buf: &mut Buffer) {
-        let title = Line::from(" Suffer Fag ".bold());
+    fn get_wpm(&self) -> u16 {
         let mut wpm = 0;
         match self.start_time {
             Some(t) => {
                 let elapsed = t.elapsed().as_secs_f32();
-                wpm = (self.correct as f32 / 5.0 / (elapsed / 60.0)) as i32;
+                wpm = (self.correct as f32 / 5.0 / (elapsed / 60.0)) as u16;
             }
             None => {}
         }
+        wpm
+    }
+
+    fn get_accur(&self) -> u8 {
         let mut accur = 0;
-        if self.current_word > self.errors {
-            accur = ((self.correct - self.errors) as f32 * 100.0 / self.correct as f32) as i32;
+        let error_count = self.errors.len();
+        if self.current_word > error_count {
+            accur = ((self.correct - error_count) as f32 * 100.0 / self.correct as f32) as u8;
         }
+        accur
+    }
+
+    fn render_text(&self, area: Rect, buf: &mut Buffer) {
+        let title = Line::from(" Suffer Fag ".bold());
         let instructions = Line::from(vec![
             " WPM: ".into(),
-            wpm.to_string().into(),
+            self.get_wpm().to_string().into(),
             " ".into(),
             " Accuracy: ".into(),
-            accur.to_string().into(),
-            " ".into(),
-            self.get_cur_pos().to_string().into(),
-            " ".into(),
-            self.user_input[self.current_word].to_string().into(),
+            self.get_accur().to_string().into(),
+            "% ".into(),
         ]);
         let block = Block::bordered()
             .title(title.centered())
             .title_bottom(instructions.centered())
             .border_set(border::THICK);
-
         let layout_v = Layout::default()
             .direction(Direction::Vertical)
             .constraints([
@@ -365,5 +403,56 @@ impl Widget for &App {
             .left_aligned()
             .block(block)
             .render(layout_h[1], buf);
+    }
+
+    fn render_game_stats(&self, area: Rect, buf: &mut Buffer) {
+        let title = Line::from(" Suffer Fag ".bold());
+        // let instructions = Line::from(vec![
+        //     " WPM: ".into(),
+        //     self.get_wpm().to_string().into(),
+        //     " ".into(),
+        //     " Accuracy: ".into(),
+        //     self.get_accur().to_string().into(),
+        //     " ".into(),
+        // ]);
+        let block = Block::bordered()
+            .title(title.centered())
+            // .title_bottom(instructions.centered())
+            .border_set(border::THICK);
+        let layout_v = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([
+                Constraint::Fill(1),
+                Constraint::Length(20),
+                Constraint::Fill(1),
+            ])
+            .split(area);
+
+        let layout_h = Layout::default()
+            .direction(Direction::Horizontal)
+            .constraints([
+                Constraint::Fill(1),
+                Constraint::Length(self.width),
+                Constraint::Fill(1),
+            ])
+            .split(layout_v[1]);
+        let dataset = vec![
+            Dataset::default()
+                .name("wpm")
+                .marker(symbols::Marker::Braille)
+                .style(Style::default().fg(Color::Gray))
+                .data(todo!()),
+            Dataset::default()
+                .name("err")
+                .marker(Marker::Dot)
+                .style(Style::default().fg(Color::Red))
+                .data(todo!()),
+        ];
+    }
+}
+
+impl Widget for &App {
+    fn render(self, area: Rect, buf: &mut Buffer) {
+        App::render_text(self, area, buf);
     }
 }
