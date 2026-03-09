@@ -1,4 +1,5 @@
 use rand::prelude::*;
+use ratatui::widgets::{Axis, GraphType};
 use std::cmp::max;
 use std::time::{Duration, Instant};
 use std::{default, io, vec};
@@ -49,11 +50,12 @@ pub struct Typ {
     target: Vec<String>,
     start_time: Option<Instant>,
     correct: u32,
-    wpm: Vec<f32>,
-    errors: Vec<f32>,
+    wpm: Vec<(f64, f64)>,
+    errors: Vec<f64>,
     words_count: u32,
-    time: Option<u32>,
+    time: Option<Duration>,
     current_word: u32,
+    end: bool,
 }
 
 impl Typ {
@@ -67,8 +69,9 @@ impl Typ {
                 wpm: Vec::new(),
                 errors: Vec::new(),
                 words_count: time * 500 / 60,
-                time: Some(time),
+                time: Some(Duration::from_secs(time as u64)),
                 current_word: 0,
+                end: false,
             },
             TextType::Words(words_count, dict) => Typ {
                 user_input: vec!["".to_string()],
@@ -80,6 +83,7 @@ impl Typ {
                 words_count: words_count,
                 time: None,
                 current_word: 0,
+                end: false,
             },
             TextType::Quote(quote) => {
                 let target: Vec<String> = quote.split_whitespace().map(|s| s.to_string()).collect();
@@ -94,6 +98,7 @@ impl Typ {
                     words_count: target_len,
                     time: None,
                     current_word: 0,
+                    end: false,
                 }
             }
         }
@@ -110,12 +115,16 @@ impl Typ {
 
     fn next_word(&mut self) {
         let cur_it = self.current_word as usize;
-        if !self.user_input[cur_it].is_empty() && self.words_count - 1 != self.current_word {
-            if self.user_input[cur_it].chars().count() < self.target[cur_it].chars().count() {
-                self.error_incr();
+        if !self.user_input[cur_it].is_empty() {
+            if self.words_count - 1 != self.current_word {
+                if self.user_input[cur_it].chars().count() < self.target[cur_it].chars().count() {
+                    self.error_incr();
+                }
+                self.current_word += 1;
+                self.user_input.push("".to_string());
+            } else {
+                self.complete();
             }
-            self.current_word += 1;
-            self.user_input.push("".to_string());
         }
     }
 
@@ -175,7 +184,7 @@ impl Typ {
     fn error_incr(&mut self) {
         match self.start_time {
             Some(t) => {
-                self.errors.push(t.elapsed().as_secs_f32());
+                self.errors.push(t.elapsed().as_secs_f64());
             }
             None => {}
         }
@@ -304,12 +313,12 @@ impl Typ {
         self.start_time = Some(Instant::now());
     }
 
-    fn get_wpm(&self) -> u16 {
-        let mut wpm = 0;
+    fn get_wpm(&self) -> f32 {
+        let mut wpm = 0.0;
         match self.start_time {
             Some(t) => {
                 let elapsed = t.elapsed().as_secs_f32();
-                wpm = (self.correct as f32 / 5.0 / (elapsed / 60.0)) as u16;
+                wpm = self.correct as f32 / 5.0 / (elapsed / 60.0);
             }
             None => {}
         }
@@ -330,7 +339,7 @@ impl Typ {
         let title = Line::from(" Suffer Fag ".bold());
         let instructions = Line::from(vec![
             " WPM: ".into(),
-            self.get_wpm().to_string().into(),
+            (self.get_wpm() as u16).to_string().into(),
             " ".into(),
             " Accuracy: ".into(),
             self.get_accur().to_string().into(),
@@ -370,20 +379,59 @@ impl Typ {
             .block(block)
             .render(layout_h[1], buf);
     }
+
+    fn get_max_wpm(&self) -> f64 {
+        let mut max: f64 = 0.0;
+        for i in &self.wpm {
+            if i.1 > max {
+                max = i.1;
+            }
+        }
+        max
+    }
+
+    fn complete(&mut self) {
+        self.end = true;
+        if self.time == None {
+            self.time = Some(self.start_time.unwrap().elapsed());
+        }
+    }
 }
 
 impl App {
     pub fn run(&mut self, terminal: &mut DefaultTerminal) -> io::Result<()> {
         self.game = Typ::new(TextType::Words(
-            100,
+            10,
             dict::DICT.iter().map(|s| s.to_string()).collect(),
         ));
+        // self.game = Typ::new(TextType::Quote(dict::QUOTE.to_string()));
 
-        let fps = 10;
-        let tick_rate = Duration::from_millis(1000 / fps);
+        self.state = State::Typing;
+
+        let tick_rate = Duration::from_millis(1000 / constants::FPS as u64);
         let mut last_tick = Instant::now();
+        let mut last_wpm_check = Instant::now();
         while !self.exit {
+            if self.game.end {
+                self.state = State::GameStats
+            }
+
             terminal.draw(|frame| self.draw(frame))?;
+
+            if last_wpm_check.elapsed() >= Duration::from_secs(1) {
+                match self.state {
+                    State::Typing => match self.game.start_time {
+                        Some(t) => {
+                            self.game
+                                .wpm
+                                .push((t.elapsed().as_secs_f64(), self.game.get_wpm() as f64));
+                        }
+                        _ => {}
+                    },
+                    _ => {}
+                }
+                last_wpm_check = Instant::now();
+            }
 
             let timeout = tick_rate
                 .checked_sub(last_tick.elapsed())
@@ -394,7 +442,6 @@ impl App {
             }
 
             if last_tick.elapsed() >= tick_rate {
-                // app.update(); // timer logic
                 last_tick = Instant::now();
             }
         }
@@ -435,54 +482,102 @@ impl App {
         self.exit = true;
     }
 
-    // fn render_game_stats(&self, area: Rect, buf: &mut Buffer) {
-    //     let title = Line::from(" Suffer Fag ".bold());
-    //     // let instructions = Line::from(vec![
-    //     //     " WPM: ".into(),
-    //     //     self.get_wpm().to_string().into(),
-    //     //     " ".into(),
-    //     //     " Accuracy: ".into(),
-    //     //     self.get_accur().to_string().into(),
-    //     //     " ".into(),
-    //     // ]);
-    //     let block = Block::bordered()
-    //         .title(title.centered())
-    //         // .title_bottom(instructions.centered())
-    //         .border_set(border::THICK);
-    //     let layout_v = Layout::default()
-    //         .direction(Direction::Vertical)
-    //         .constraints([
-    //             Constraint::Fill(1),
-    //             Constraint::Length(20),
-    //             Constraint::Fill(1),
-    //         ])
-    //         .split(area);
-    //
-    //     let layout_h = Layout::default()
-    //         .direction(Direction::Horizontal)
-    //         .constraints([
-    //             Constraint::Fill(1),
-    //             Constraint::Length(self.width),
-    //             Constraint::Fill(1),
-    //         ])
-    //         .split(layout_v[1]);
-    //     let dataset = vec![
-    //         Dataset::default()
-    //             .name("wpm")
-    //             .marker(symbols::Marker::Braille)
-    //             .style(Style::default().fg(Color::Gray))
-    //             .data(todo!()),
-    //         Dataset::default()
-    //             .name("err")
-    //             .marker(Marker::Dot)
-    //             .style(Style::default().fg(Color::Red))
-    //             .data(todo!()),
-    //     ];
-    // }
+    fn render_game_stats(&self, area: Rect, buf: &mut Buffer) {
+        let title = Line::from(" Suffer Fag ".bold());
+        // let instructions = Line::from(vec![
+        // " WPM: ".into(),
+        // errors.len().to_string().into(),
+        // " ".into(),
+        // " Accuracy: ".into(),
+        // self.get_accur().to_string().into(),
+        // " ".into(),
+        // ]);
+        let block = Block::bordered()
+            .title(title.centered())
+            // .title_bottom(instructions.centered())
+            .border_set(border::THICK);
+        let layout_v = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([
+                Constraint::Fill(1),
+                Constraint::Length(constants::GAME_STATS_HEIGHT),
+                Constraint::Fill(1),
+            ])
+            .split(area);
+
+        let layout_h = Layout::default()
+            .direction(Direction::Horizontal)
+            .constraints([
+                Constraint::Fill(1),
+                Constraint::Length(constants::GAME_STATS_WIDTH),
+                Constraint::Fill(1),
+            ])
+            .split(layout_v[1]);
+        let [graph, numbers] =
+            Layout::vertical([Constraint::Fill(1), Constraint::Fill(1)]).areas(layout_h[1]);
+
+        let graph_height = self.game.get_max_wpm() + 10.0;
+        let mut errors: Vec<(f64, f64)> = Vec::new();
+        for i in &self.game.errors {
+            errors.push((*i, graph_height / 50.0));
+        }
+        let dataset = vec![
+            Dataset::default()
+                .name("wpm")
+                .marker(symbols::Marker::Braille)
+                .style(Style::default().fg(Color::Gray))
+                .graph_type(GraphType::Line)
+                .data(&self.game.wpm),
+            Dataset::default()
+                .name("err")
+                .marker(symbols::Marker::Quadrant)
+                .style(Style::default().fg(Color::Red))
+                .graph_type(GraphType::Bar)
+                .data(&errors),
+        ];
+        Chart::new(dataset)
+            .block(block)
+            .x_axis(
+                Axis::default()
+                    .title("Time")
+                    .bounds([1.0, self.game.wpm.last().unwrap().0]),
+            )
+            .y_axis(
+                Axis::default()
+                    .title("WPM")
+                    .bounds([0.0, self.game.get_max_wpm() + 10.0]),
+            )
+            .render(graph, buf);
+        let error_text = Line::from("Errors: ".to_string() + &self.game.errors.len().to_string());
+        let time_m = &self.game.time.unwrap().as_secs() / 60;
+        let time_s = &self.game.time.unwrap().as_secs() % 60;
+        let time_text;
+        if time_m == 0 {
+            time_text = Line::from(
+                "Time: ".to_string()
+                    + &self.game.time.unwrap().as_secs().to_string()
+                    + &"s".to_string(),
+            );
+        } else {
+            time_text = Line::from(
+                "Time: ".to_string()
+                    + &time_m.to_string()
+                    + &"m".to_string()
+                    + &" ".to_string()
+                    + &time_s.to_string()
+                    + &"s".to_string(),
+            );
+        }
+        Paragraph::new(Text::from(vec![error_text, time_text])).render(numbers, buf);
+    }
 }
 
 impl Widget for &App {
     fn render(self, area: Rect, buf: &mut Buffer) {
-        self.game.render_text(area, buf);
+        match self.state {
+            State::Typing => self.game.render_text(area, buf),
+            State::GameStats => self.render_game_stats(area, buf),
+            _ => panic!(),
+        }
     }
 }

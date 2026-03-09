@@ -18,3 +18,4 @@ pub static DICT: &[&str] = &[
     "system", "set", "order", "eye", "plan", "run", "keep", "face", "fact", "group", "play",
     "stand", "increase", "early", "course", "change", "help", "line",
 ];
+pub static QUOTE: &str = "You have the power to heal your life, and you need to know that.";
