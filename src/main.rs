@@ -258,24 +258,20 @@ impl Typ {
         let mut counter_words = 0;
         let mut counter_lines = 0;
         let limit: usize = (constants::TYPING_WIDTH - 2) as usize;
-        for i in 0..=self.current_word as usize {
+        counter_words = max(
+            self.target[0].chars().count(),
+            self.user_input[0].chars().count(),
+        );
+        for i in 1..=self.current_word as usize {
             let max_len = max(
                 self.target[i].chars().count(),
                 self.user_input[i].chars().count(),
             );
-            if counter_words + max_len > limit {
+            if counter_words + 1 + max_len > limit {
                 counter_lines += 1;
-                counter_words = max_len + 1;
+                counter_words = max_len;
             } else {
-                counter_words += max_len;
-                match self.target.get(i + 1) {
-                    Some(s) => {
-                        if counter_words + s.chars().count() < limit {
-                            counter_words += 1;
-                        }
-                    }
-                    _ => {}
-                }
+                counter_words += 1 + max_len;
             }
         }
         counter_lines
@@ -336,7 +332,17 @@ impl Typ {
     }
 
     fn render_text(&self, area: Rect, buf: &mut Buffer) {
-        let title = Line::from(" Suffer Fag ".bold());
+        let mut title = Line::from(" Time: 0s ");
+        match self.start_time {
+            Some(t) => {
+                title = Line::from(vec![
+                    " Time: ".into(),
+                    t.elapsed().as_secs().to_string().into(),
+                    "s ".into(),
+                ]);
+            }
+            None => {}
+        }
         let instructions = Line::from(vec![
             " WPM: ".into(),
             (self.get_wpm() as u16).to_string().into(),
@@ -380,6 +386,101 @@ impl Typ {
             .render(layout_h[1], buf);
     }
 
+    fn render_game_stats(&self, area: Rect, buf: &mut Buffer) {
+        let title = Line::from(" Suffer Fag ".bold());
+        // let instructions = Line::from(vec![
+        // " WPM: ".into(),
+        // errors.len().to_string().into(),
+        // " ".into(),
+        // " Accuracy: ".into(),
+        // self.get_accur().to_string().into(),
+        // " ".into(),
+        // ]);
+        let block = Block::bordered()
+            .title(title.centered())
+            // .title_bottom(instructions.centered())
+            .border_set(border::THICK);
+        let layout_v = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([
+                Constraint::Fill(1),
+                Constraint::Length(constants::GAME_STATS_HEIGHT),
+                Constraint::Fill(1),
+            ])
+            .split(area);
+
+        let layout_h = Layout::default()
+            .direction(Direction::Horizontal)
+            .constraints([
+                Constraint::Fill(1),
+                Constraint::Length(constants::GAME_STATS_WIDTH),
+                Constraint::Fill(1),
+            ])
+            .split(layout_v[1]);
+        let [graph, numbers] =
+            Layout::vertical([Constraint::Fill(1), Constraint::Fill(1)]).areas(layout_h[1]);
+
+        let graph_height = self.get_max_wpm() + 10.0;
+        let mut errors: Vec<(f64, f64)> = Vec::new();
+        for i in &self.errors {
+            errors.push((*i, graph_height / 50.0));
+        }
+        let dataset = vec![
+            Dataset::default()
+                .name("wpm")
+                .marker(symbols::Marker::Braille)
+                .style(Style::default().fg(Color::Gray))
+                .graph_type(GraphType::Line)
+                .data(&self.wpm),
+            Dataset::default()
+                .name("err")
+                .marker(symbols::Marker::Quadrant)
+                .style(Style::default().fg(Color::Red))
+                .graph_type(GraphType::Bar)
+                .data(&errors),
+        ];
+        Chart::new(dataset)
+            .block(block)
+            .x_axis(
+                Axis::default()
+                    .title("Time")
+                    .bounds([1.0, self.wpm.last().unwrap().0]),
+            )
+            .y_axis(
+                Axis::default()
+                    .title("WPM")
+                    .bounds([0.0, self.get_max_wpm() + 10.0]),
+            )
+            .render(graph, buf);
+        let error_text = Line::from("Errors: ".to_string() + &self.errors.len().to_string());
+        let wpm_text = Line::from(
+            "WPM: ".to_string() + (self.wpm.last().unwrap().1 as u16).to_string().as_str(),
+        );
+        let time_m = &self.time.unwrap().as_secs() / 60;
+        let time_s = &self.time.unwrap().as_secs() % 60;
+        let time_text;
+        if time_m == 0 {
+            time_text = Line::from(
+                "Time: ".to_string() + &self.time.unwrap().as_secs().to_string() + &"s".to_string(),
+            );
+        } else {
+            time_text = Line::from(
+                "Time: ".to_string()
+                    + &time_m.to_string()
+                    + &"m".to_string()
+                    + &" ".to_string()
+                    + &time_s.to_string()
+                    + &"s".to_string(),
+            );
+        }
+        let block_numbers = Block::bordered()
+            // .title(title.centered())
+            .border_set(border::THICK);
+        Paragraph::new(Text::from(vec![error_text, time_text, wpm_text]))
+            .block(block_numbers)
+            .render(numbers, buf);
+    }
+
     fn get_max_wpm(&self) -> f64 {
         let mut max: f64 = 0.0;
         for i in &self.wpm {
@@ -401,7 +502,7 @@ impl Typ {
 impl App {
     pub fn run(&mut self, terminal: &mut DefaultTerminal) -> io::Result<()> {
         self.game = Typ::new(TextType::Words(
-            10,
+            100,
             dict::DICT.iter().map(|s| s.to_string()).collect(),
         ));
         // self.game = Typ::new(TextType::Quote(dict::QUOTE.to_string()));
@@ -481,102 +582,13 @@ impl App {
     fn exit(&mut self) {
         self.exit = true;
     }
-
-    fn render_game_stats(&self, area: Rect, buf: &mut Buffer) {
-        let title = Line::from(" Suffer Fag ".bold());
-        // let instructions = Line::from(vec![
-        // " WPM: ".into(),
-        // errors.len().to_string().into(),
-        // " ".into(),
-        // " Accuracy: ".into(),
-        // self.get_accur().to_string().into(),
-        // " ".into(),
-        // ]);
-        let block = Block::bordered()
-            .title(title.centered())
-            // .title_bottom(instructions.centered())
-            .border_set(border::THICK);
-        let layout_v = Layout::default()
-            .direction(Direction::Vertical)
-            .constraints([
-                Constraint::Fill(1),
-                Constraint::Length(constants::GAME_STATS_HEIGHT),
-                Constraint::Fill(1),
-            ])
-            .split(area);
-
-        let layout_h = Layout::default()
-            .direction(Direction::Horizontal)
-            .constraints([
-                Constraint::Fill(1),
-                Constraint::Length(constants::GAME_STATS_WIDTH),
-                Constraint::Fill(1),
-            ])
-            .split(layout_v[1]);
-        let [graph, numbers] =
-            Layout::vertical([Constraint::Fill(1), Constraint::Fill(1)]).areas(layout_h[1]);
-
-        let graph_height = self.game.get_max_wpm() + 10.0;
-        let mut errors: Vec<(f64, f64)> = Vec::new();
-        for i in &self.game.errors {
-            errors.push((*i, graph_height / 50.0));
-        }
-        let dataset = vec![
-            Dataset::default()
-                .name("wpm")
-                .marker(symbols::Marker::Braille)
-                .style(Style::default().fg(Color::Gray))
-                .graph_type(GraphType::Line)
-                .data(&self.game.wpm),
-            Dataset::default()
-                .name("err")
-                .marker(symbols::Marker::Quadrant)
-                .style(Style::default().fg(Color::Red))
-                .graph_type(GraphType::Bar)
-                .data(&errors),
-        ];
-        Chart::new(dataset)
-            .block(block)
-            .x_axis(
-                Axis::default()
-                    .title("Time")
-                    .bounds([1.0, self.game.wpm.last().unwrap().0]),
-            )
-            .y_axis(
-                Axis::default()
-                    .title("WPM")
-                    .bounds([0.0, self.game.get_max_wpm() + 10.0]),
-            )
-            .render(graph, buf);
-        let error_text = Line::from("Errors: ".to_string() + &self.game.errors.len().to_string());
-        let time_m = &self.game.time.unwrap().as_secs() / 60;
-        let time_s = &self.game.time.unwrap().as_secs() % 60;
-        let time_text;
-        if time_m == 0 {
-            time_text = Line::from(
-                "Time: ".to_string()
-                    + &self.game.time.unwrap().as_secs().to_string()
-                    + &"s".to_string(),
-            );
-        } else {
-            time_text = Line::from(
-                "Time: ".to_string()
-                    + &time_m.to_string()
-                    + &"m".to_string()
-                    + &" ".to_string()
-                    + &time_s.to_string()
-                    + &"s".to_string(),
-            );
-        }
-        Paragraph::new(Text::from(vec![error_text, time_text])).render(numbers, buf);
-    }
 }
 
 impl Widget for &App {
     fn render(self, area: Rect, buf: &mut Buffer) {
         match self.state {
             State::Typing => self.game.render_text(area, buf),
-            State::GameStats => self.render_game_stats(area, buf),
+            State::GameStats => self.game.render_game_stats(area, buf),
             _ => panic!(),
         }
     }
