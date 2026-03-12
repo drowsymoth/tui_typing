@@ -1,6 +1,8 @@
 use rand::prelude::*;
-use ratatui::widgets::{Axis, GraphType};
+use ratatui::style::{Modifier, Styled};
+use ratatui::widgets::{Axis, GraphType, List, ListState};
 use std::cmp::max;
+use std::process::Termination;
 use std::time::{Duration, Instant};
 use std::{default, io, vec};
 
@@ -9,17 +11,203 @@ mod dict;
 
 use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 use ratatui::{
-    buffer::Buffer,
     layout::{Constraint, Direction, Layout, Rect},
     style::{Color, Style, Stylize},
     symbols::{self, border, Marker},
     text::{Line, Span, Text},
-    widgets::{Block, Chart, Dataset, Paragraph, Widget, Wrap},
+    widgets::{Block, Chart, Dataset, Paragraph, Tabs, Wrap},
     DefaultTerminal, Frame,
 };
 
+use crate::dict::DICT;
+
 fn main() -> io::Result<()> {
     ratatui::run(|terminal| App::default().run(terminal))
+}
+
+#[derive(Default, Debug, Clone, Copy)]
+enum MenuPage {
+    #[default]
+    Words,
+    Time,
+    Quote,
+}
+
+impl MenuPage {
+    const ALL: [Self; 3] = [Self::Words, Self::Time, Self::Quote];
+
+    fn next(&self) -> Self {
+        let i = ((*self) as usize + 1) % 3;
+        Self::ALL[i]
+    }
+
+    fn prev(&self) -> Self {
+        let i = (3 + (*self) as usize - 1) % 3;
+        Self::ALL[i]
+    }
+}
+
+enum MenuCall {
+    Exit,
+    Start(TextType),
+    None,
+}
+
+#[derive(Debug, Default)]
+enum Selected {
+    #[default]
+    Tabs,
+    Content,
+}
+
+#[derive(Debug, Default)]
+struct Menu {
+    page: MenuPage,
+    words_count: usize,
+    time: usize,
+    selected: Selected,
+}
+
+impl Menu {
+    fn new() -> Self {
+        Self {
+            page: MenuPage::Words,
+            words_count: 100,
+            time: 30,
+            selected: Selected::Tabs,
+        }
+    }
+
+    fn handle_key_event(&mut self, key_event: KeyEvent) -> MenuCall {
+        match key_event.code {
+            KeyCode::Enter => match self.page {
+                MenuPage::Words => MenuCall::Start(TextType::Words(
+                    self.words_count,
+                    dict::DICT.iter().map(|s| s.to_string()).collect(),
+                )),
+                MenuPage::Time => MenuCall::Start(TextType::Time(
+                    self.time,
+                    dict::DICT.iter().map(|s| s.to_string()).collect(),
+                )),
+                MenuPage::Quote => {
+                    //TODO
+                    MenuCall::None
+                }
+            },
+            KeyCode::Char('j') => {
+                self.selected = Selected::Content;
+                MenuCall::None
+            }
+            KeyCode::Char('k') => {
+                self.selected = Selected::Tabs;
+                MenuCall::None
+            }
+            KeyCode::Char('q') => MenuCall::Exit,
+            KeyCode::Char('h') => match self.selected {
+                Selected::Tabs => {
+                    self.page = self.page.prev();
+                    MenuCall::None
+                }
+                Selected::Content => match self.page {
+                    MenuPage::Words => {
+                        if self.words_count > 10 {
+                            self.words_count -= 10;
+                        }
+                        MenuCall::None
+                    }
+                    MenuPage::Time => {
+                        if self.time > 10 {
+                            self.time -= 10;
+                        }
+                        MenuCall::None
+                    }
+                    MenuPage::Quote => {
+                        //TODO
+                        MenuCall::None
+                    }
+                },
+            },
+            KeyCode::Char('l') => match self.selected {
+                Selected::Tabs => {
+                    self.page = self.page.next();
+                    MenuCall::None
+                }
+                Selected::Content => match self.page {
+                    MenuPage::Words => {
+                        self.words_count += 10;
+                        MenuCall::None
+                    }
+                    MenuPage::Time => {
+                        self.time += 10;
+                        MenuCall::None
+                    }
+                    MenuPage::Quote => {
+                        //TODO
+                        MenuCall::None
+                    }
+                },
+            },
+            _ => MenuCall::None,
+        }
+    }
+
+    fn render_menu(&self, frame: &mut Frame) {
+        let block = Block::bordered().border_set(border::DOUBLE);
+        let layout_v = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([
+                Constraint::Fill(1),
+                Constraint::Length(constants::GAME_STATS_HEIGHT),
+                Constraint::Fill(1),
+            ])
+            .split(frame.area());
+
+        let layout_h = Layout::default()
+            .direction(Direction::Horizontal)
+            .constraints([
+                Constraint::Fill(1),
+                Constraint::Length(constants::GAME_STATS_WIDTH),
+                Constraint::Fill(1),
+            ])
+            .split(layout_v[1]);
+
+        let [tabs_area, content] =
+            Layout::vertical([Constraint::Length(3), Constraint::Fill(1)]).areas(layout_h[1]);
+
+        let [_, tabs_area, _] = Layout::horizontal([
+            Constraint::Fill(1),
+            Constraint::Length(29),
+            Constraint::Fill(1),
+        ])
+        .areas(tabs_area);
+
+        let tabs = Tabs::new(vec!["Words", "Time", "Quotes"])
+            .style(Color::White)
+            .highlight_style(Style::default().magenta().on_black().bold())
+            .select(self.page as usize)
+            .divider(symbols::DOT)
+            .padding("->", "<-");
+
+        frame.render_widget(tabs, tabs_area);
+
+        match self.page {
+            MenuPage::Words => {
+                let text = "Words: ".to_string() + self.words_count.to_string().as_str();
+                let par = Paragraph::new(text).block(block);
+                frame.render_widget(par, content);
+            }
+            MenuPage::Time => {
+                let text = "Time: ".to_string() + self.time.to_string().as_str() + "s";
+                let par = Paragraph::new(text).block(block);
+                frame.render_widget(par, content);
+            }
+            MenuPage::Quote => {
+                let text = "todo";
+                let par = Paragraph::new(text).block(block);
+                frame.render_widget(par, content);
+            }
+        }
+    }
 }
 
 #[derive(Default, Debug)]
@@ -28,23 +216,32 @@ enum State {
     Menu,
     Typing,
     GameStats,
-    AllStats,
+    // AllStats,
 }
 
+#[derive(Debug)]
 enum TextType {
-    Time(u32, Vec<String>),
-    Words(u32, Vec<String>),
+    Time(usize, Vec<String>),
+    Words(usize, Vec<String>),
     Quote(String),
+}
+
+impl Default for TextType {
+    fn default() -> Self {
+        Self::Words(100, dict::DICT.iter().map(|s| s.to_string()).collect())
+    }
 }
 
 #[derive(Debug, Default)]
 pub struct App {
-    exit: bool,
     state: State,
     game: Typ,
+    menu: Menu,
+    config: TextType,
+    exit: bool,
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct Typ {
     user_input: Vec<String>,
     target: Vec<String>,
@@ -52,14 +249,14 @@ pub struct Typ {
     correct: u32,
     wpm: Vec<(f64, f64)>,
     errors: Vec<f64>,
-    words_count: u32,
+    words_count: usize,
     time: Option<Duration>,
-    current_word: u32,
+    current_word: usize,
     end: bool,
 }
 
 impl Typ {
-    pub fn new(kind: TextType) -> Self {
+    fn new(kind: &TextType) -> Self {
         match kind {
             TextType::Time(time, dict) => Typ {
                 user_input: vec!["".to_string()],
@@ -69,25 +266,25 @@ impl Typ {
                 wpm: Vec::new(),
                 errors: Vec::new(),
                 words_count: time * 500 / 60,
-                time: Some(Duration::from_secs(time as u64)),
+                time: Some(Duration::from_secs(*time as u64)),
                 current_word: 0,
                 end: false,
             },
             TextType::Words(words_count, dict) => Typ {
                 user_input: vec!["".to_string()],
-                target: Typ::fill_with_shuffle(dict, words_count),
+                target: Typ::fill_with_shuffle(dict, *words_count),
                 start_time: None,
                 correct: 0,
                 wpm: Vec::new(),
                 errors: Vec::new(),
-                words_count: words_count,
+                words_count: *words_count,
                 time: None,
                 current_word: 0,
                 end: false,
             },
             TextType::Quote(quote) => {
                 let target: Vec<String> = quote.split_whitespace().map(|s| s.to_string()).collect();
-                let target_len = target.len() as u32;
+                let target_len = target.len();
                 Typ {
                     user_input: vec!["".to_string()],
                     target: target,
@@ -104,7 +301,7 @@ impl Typ {
         }
     }
 
-    fn fill_with_shuffle(dict: Vec<String>, words_count: u32) -> Vec<String> {
+    fn fill_with_shuffle(dict: &Vec<String>, words_count: usize) -> Vec<String> {
         let mut rng = rand::rng();
         let mut target: Vec<String> = Vec::new();
         for _ in 0..words_count {
@@ -114,10 +311,11 @@ impl Typ {
     }
 
     fn next_word(&mut self) {
-        let cur_it = self.current_word as usize;
-        if !self.user_input[cur_it].is_empty() {
+        if !self.user_input[self.current_word].is_empty() {
             if self.words_count - 1 != self.current_word {
-                if self.user_input[cur_it].chars().count() < self.target[cur_it].chars().count() {
+                if self.user_input[self.current_word].chars().count()
+                    < self.target[self.current_word].chars().count()
+                {
                     self.error_incr();
                 }
                 self.current_word += 1;
@@ -129,15 +327,14 @@ impl Typ {
     }
 
     fn add_char(&mut self, input: char) {
-        let cur_it = self.current_word as usize;
         if self.is_end() {
             return;
         }
-        self.user_input[cur_it].push(input);
+        self.user_input[self.current_word].push(input);
 
-        match self.target[cur_it]
+        match self.target[self.current_word]
             .chars()
-            .nth(self.user_input[cur_it].chars().count() - 1)
+            .nth(self.user_input[self.current_word].chars().count() - 1)
         {
             Some(c) => {
                 if c != input {
@@ -155,29 +352,27 @@ impl Typ {
     }
 
     fn delete_char(&mut self) {
-        let cur_it = self.current_word as usize;
         if self.user_input.is_empty() || self.user_input[0].is_empty() {
             return;
-        } else if !self.user_input[cur_it].is_empty() {
-            self.user_input[cur_it].pop();
-        } else if self.user_input[cur_it - 1] != self.target[cur_it - 1] {
+        } else if !self.user_input[self.current_word].is_empty() {
+            self.user_input[self.current_word].pop();
+        } else if self.user_input[self.current_word - 1] != self.target[self.current_word - 1] {
             self.user_input.pop();
             self.current_word -= 1;
         }
     }
 
     fn delete_word(&mut self) {
-        let cur_it = self.current_word as usize;
         if self.user_input.is_empty() || self.user_input[0].is_empty() {
             return;
         } else if self.user_input.len() == 1 {
             self.user_input[0] = "".to_string();
             return;
-        } else if self.user_input[cur_it - 1] != self.target[cur_it - 1] {
+        } else if self.user_input[self.current_word - 1] != self.target[self.current_word - 1] {
             self.user_input.pop();
             self.current_word -= 1;
-        } else if !self.user_input[cur_it].is_empty() {
-            self.user_input[cur_it] = "".to_string();
+        } else if !self.user_input[self.current_word].is_empty() {
+            self.user_input[self.current_word] = "".to_string();
         }
     }
 
@@ -255,10 +450,9 @@ impl Typ {
     }
 
     fn get_cur_pos(&self) -> u16 {
-        let mut counter_words = 0;
         let mut counter_lines = 0;
         let limit: usize = (constants::TYPING_WIDTH - 2) as usize;
-        counter_words = max(
+        let mut counter_words = max(
             self.target[0].chars().count(),
             self.user_input[0].chars().count(),
         );
@@ -278,33 +472,30 @@ impl Typ {
     }
 
     fn is_end(&self) -> bool {
-        let cur_it = self.current_word as usize;
-        if self.user_input[cur_it].chars().count() < self.target[cur_it].chars().count() {
+        if self.user_input[self.current_word as usize].chars().count()
+            < self.target[self.current_word as usize].chars().count()
+        {
             return false;
         }
-        let mut counter_words = 0;
         let limit: usize = (constants::TYPING_WIDTH - 2) as usize;
-        for i in 0..=cur_it {
+        let mut counter_words = max(
+            self.target[0].chars().count(),
+            self.user_input[0].chars().count(),
+        );
+        for i in 1..=self.current_word as usize {
             let max_len = max(
                 self.target[i].chars().count(),
                 self.user_input[i].chars().count(),
             );
-            if counter_words + max_len > limit {
-                counter_words = max_len + 1;
+            if counter_words + 1 + max_len > limit {
+                counter_words = max_len;
             } else {
-                counter_words += max_len;
-                match self.target.get(i + 1) {
-                    Some(s) => {
-                        if counter_words + s.chars().count() < limit {
-                            counter_words += 1;
-                        }
-                    }
-                    _ => {}
-                }
+                counter_words += 1 + max_len;
             }
         }
         counter_words >= (constants::TYPING_WIDTH - 2) as usize
     }
+
     fn set_start_time(&mut self) {
         self.start_time = Some(Instant::now());
     }
@@ -324,14 +515,14 @@ impl Typ {
     fn get_accur(&self) -> u8 {
         let mut accur = 0;
         let error_count = self.errors.len();
-        if self.current_word > error_count as u32 {
+        if self.current_word > error_count {
             accur =
                 ((self.correct - error_count as u32) as f32 * 100.0 / self.correct as f32) as u8;
         }
         accur
     }
 
-    fn render_text(&self, area: Rect, buf: &mut Buffer) {
+    fn render_text(&self, frame: &mut Frame) {
         let mut title = Line::from(" Time: 0s ");
         match self.start_time {
             Some(t) => {
@@ -362,7 +553,7 @@ impl Typ {
                 Constraint::Length(constants::TYPING_HEIGHT),
                 Constraint::Fill(1),
             ])
-            .split(area);
+            .split(frame.area());
 
         let layout_h = Layout::default()
             .direction(Direction::Horizontal)
@@ -378,27 +569,19 @@ impl Typ {
             scroll_v -= 1;
         }
 
-        Paragraph::new(Text::from(Line::from(self.check_display())))
+        let par = Paragraph::new(Text::from(Line::from(self.check_display())))
             .wrap(Wrap { trim: true })
             .scroll((scroll_v, 0))
             .left_aligned()
-            .block(block)
-            .render(layout_h[1], buf);
+            .block(block);
+
+        frame.render_widget(par, layout_h[1]);
     }
 
-    fn render_game_stats(&self, area: Rect, buf: &mut Buffer) {
+    fn render_game_stats(&self, frame: &mut Frame) {
         let title = Line::from(" Suffer Fag ".bold());
-        // let instructions = Line::from(vec![
-        // " WPM: ".into(),
-        // errors.len().to_string().into(),
-        // " ".into(),
-        // " Accuracy: ".into(),
-        // self.get_accur().to_string().into(),
-        // " ".into(),
-        // ]);
         let block = Block::bordered()
             .title(title.centered())
-            // .title_bottom(instructions.centered())
             .border_set(border::THICK);
         let layout_v = Layout::default()
             .direction(Direction::Vertical)
@@ -407,7 +590,7 @@ impl Typ {
                 Constraint::Length(constants::GAME_STATS_HEIGHT),
                 Constraint::Fill(1),
             ])
-            .split(area);
+            .split(frame.area());
 
         let layout_h = Layout::default()
             .direction(Direction::Horizontal)
@@ -439,7 +622,8 @@ impl Typ {
                 .graph_type(GraphType::Bar)
                 .data(&errors),
         ];
-        Chart::new(dataset)
+
+        let chart = Chart::new(dataset)
             .block(block)
             .x_axis(
                 Axis::default()
@@ -450,8 +634,9 @@ impl Typ {
                 Axis::default()
                     .title("WPM")
                     .bounds([0.0, self.get_max_wpm() + 10.0]),
-            )
-            .render(graph, buf);
+            );
+
+        frame.render_widget(chart, graph);
         let error_text = Line::from("Errors: ".to_string() + &self.errors.len().to_string());
         let wpm_text = Line::from(
             "WPM: ".to_string() + (self.wpm.last().unwrap().1 as u16).to_string().as_str(),
@@ -473,12 +658,11 @@ impl Typ {
                     + &"s".to_string(),
             );
         }
-        let block_numbers = Block::bordered()
-            // .title(title.centered())
-            .border_set(border::THICK);
-        Paragraph::new(Text::from(vec![error_text, time_text, wpm_text]))
-            .block(block_numbers)
-            .render(numbers, buf);
+        let block_numbers = Block::bordered().border_set(border::THICK);
+        let par =
+            Paragraph::new(Text::from(vec![error_text, time_text, wpm_text])).block(block_numbers);
+
+        frame.render_widget(par, numbers);
     }
 
     fn get_max_wpm(&self) -> f64 {
@@ -497,17 +681,34 @@ impl Typ {
             self.time = Some(self.start_time.unwrap().elapsed());
         }
     }
+
+    fn handle_key_event(&mut self, key_event: KeyEvent) {
+        match key_event.code {
+            KeyCode::Char(' ') => self.next_word(),
+            KeyCode::Backspace if key_event.modifiers.contains(KeyModifiers::CONTROL) => {
+                self.delete_word()
+            }
+            KeyCode::Char('h') if key_event.modifiers.contains(KeyModifiers::CONTROL) => {
+                self.delete_word()
+            }
+            KeyCode::Backspace => self.delete_char(),
+            KeyCode::Char(c) => self.add_char(c),
+            _ => {}
+        }
+    }
+}
+
+impl Default for Typ {
+    fn default() -> Self {
+        Typ::new(&TextType::default())
+    }
 }
 
 impl App {
     pub fn run(&mut self, terminal: &mut DefaultTerminal) -> io::Result<()> {
-        self.game = Typ::new(TextType::Words(
-            100,
-            dict::DICT.iter().map(|s| s.to_string()).collect(),
-        ));
-        // self.game = Typ::new(TextType::Quote(dict::QUOTE.to_string()));
-
-        self.state = State::Typing;
+        // self.game = Typ::new(&self.config);
+        self.menu = Menu::new();
+        // self.state = State::Typing;
 
         let tick_rate = Duration::from_millis(1000 / constants::FPS as u64);
         let mut last_tick = Instant::now();
@@ -550,46 +751,39 @@ impl App {
     }
 
     fn draw(&self, frame: &mut Frame) {
-        frame.render_widget(self, frame.area());
+        match self.state {
+            State::Menu => self.menu.render_menu(frame),
+            State::Typing => self.game.render_text(frame),
+            State::GameStats => self.game.render_game_stats(frame),
+            // _ => panic!(),
+        }
     }
 
     fn handle_events(&mut self) -> io::Result<()> {
         match event::read()? {
             Event::Key(key_event) if key_event.kind == KeyEventKind::Press => {
-                self.handle_key_event(key_event)
+                match self.state {
+                    State::Typing => {
+                        self.game.handle_key_event(key_event);
+                    }
+                    State::Menu => match self.menu.handle_key_event(key_event) {
+                        MenuCall::Exit => self.exit(),
+                        MenuCall::Start(s) => {
+                            self.game = Typ::new(&s);
+                            self.state = State::Typing;
+                        }
+                        _ => {}
+                    },
+                    _ => {}
+                }
+                // self.handle_key_event(key_event)
             }
             _ => {}
         };
         Ok(())
     }
 
-    fn handle_key_event(&mut self, key_event: KeyEvent) {
-        match key_event.code {
-            KeyCode::Char(' ') => self.game.next_word(),
-            KeyCode::Char('q') => self.exit(),
-            KeyCode::Backspace if key_event.modifiers.contains(KeyModifiers::CONTROL) => {
-                self.game.delete_word()
-            }
-            KeyCode::Char('h') if key_event.modifiers.contains(KeyModifiers::CONTROL) => {
-                self.game.delete_word()
-            }
-            KeyCode::Backspace => self.game.delete_char(),
-            KeyCode::Char(c) => self.game.add_char(c),
-            _ => {}
-        }
-    }
-
     fn exit(&mut self) {
         self.exit = true;
-    }
-}
-
-impl Widget for &App {
-    fn render(self, area: Rect, buf: &mut Buffer) {
-        match self.state {
-            State::Typing => self.game.render_text(area, buf),
-            State::GameStats => self.game.render_game_stats(area, buf),
-            _ => panic!(),
-        }
     }
 }
