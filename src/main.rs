@@ -11,15 +11,13 @@ mod dict;
 
 use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 use ratatui::{
+    DefaultTerminal, Frame,
     layout::{Constraint, Direction, Layout, Rect},
     style::{Color, Style, Stylize},
-    symbols::{self, border, Marker},
+    symbols::{self, Marker, border},
     text::{Line, Span, Text},
     widgets::{Block, Chart, Dataset, Paragraph, Tabs, Wrap},
-    DefaultTerminal, Frame,
 };
-
-use crate::dict::DICT;
 
 fn main() -> io::Result<()> {
     ratatui::run(|terminal| App::default().run(terminal))
@@ -57,7 +55,23 @@ enum MenuCall {
 enum Selected {
     #[default]
     Tabs,
-    Content,
+    Quantity,
+}
+
+impl Selected {
+    fn next(&self) -> Option<Self> {
+        match self {
+            Selected::Tabs => Some(Selected::Quantity),
+            Selected::Quantity => None,
+        }
+    }
+
+    fn prev(&self) -> Option<Self> {
+        match self {
+            Selected::Tabs => None,
+            Selected::Quantity => Some(Selected::Tabs),
+        }
+    }
 }
 
 #[derive(Debug, Default)]
@@ -95,69 +109,81 @@ impl Menu {
                 }
             },
             KeyCode::Char('j') => {
-                self.selected = Selected::Content;
+                match self.selected.next() {
+                    Some(s) => self.selected = s,
+                    None => {}
+                }
                 MenuCall::None
             }
             KeyCode::Char('k') => {
-                self.selected = Selected::Tabs;
+                match self.selected.prev() {
+                    Some(s) => self.selected = s,
+                    None => {}
+                }
                 MenuCall::None
             }
             KeyCode::Char('q') => MenuCall::Exit,
-            KeyCode::Char('h') => match self.selected {
-                Selected::Tabs => {
-                    self.page = self.page.prev();
-                    MenuCall::None
-                }
-                Selected::Content => match self.page {
-                    MenuPage::Words => {
-                        if self.words_count > 10 {
-                            self.words_count -= 10;
-                        }
-                        MenuCall::None
-                    }
-                    MenuPage::Time => {
-                        if self.time > 10 {
-                            self.time -= 10;
-                        }
-                        MenuCall::None
-                    }
-                    MenuPage::Quote => {
-                        //TODO
-                        MenuCall::None
-                    }
-                },
-            },
-            KeyCode::Char('l') => match self.selected {
-                Selected::Tabs => {
-                    self.page = self.page.next();
-                    MenuCall::None
-                }
-                Selected::Content => match self.page {
-                    MenuPage::Words => {
-                        self.words_count += 10;
-                        MenuCall::None
-                    }
-                    MenuPage::Time => {
-                        self.time += 10;
-                        MenuCall::None
-                    }
-                    MenuPage::Quote => {
-                        //TODO
-                        MenuCall::None
-                    }
-                },
-            },
+            KeyCode::Char('h') => {
+                self.handle_left();
+                MenuCall::None
+            }
+            KeyCode::Char('l') => {
+                self.handle_right();
+                MenuCall::None
+            }
             _ => MenuCall::None,
         }
     }
 
+    fn handle_left(&mut self) {
+        match self.selected {
+            Selected::Tabs => {
+                self.page = self.page.prev();
+            }
+            Selected::Quantity => match self.page {
+                MenuPage::Words => {
+                    if self.words_count > 10 {
+                        self.words_count -= 10;
+                    }
+                }
+                MenuPage::Time => {
+                    if self.time > 10 {
+                        self.time -= 10;
+                    }
+                }
+                MenuPage::Quote => {
+                    //TODO
+                }
+            },
+        }
+    }
+
+    fn handle_right(&mut self) {
+        match self.selected {
+            Selected::Tabs => {
+                self.page = self.page.next();
+            }
+            Selected::Quantity => match self.page {
+                MenuPage::Words => {
+                    self.words_count += 10;
+                }
+                MenuPage::Time => {
+                    self.time += 10;
+                }
+                MenuPage::Quote => {
+                    //TODO
+                }
+            },
+        }
+    }
+
     fn render_menu(&self, frame: &mut Frame) {
-        let block = Block::bordered().border_set(border::DOUBLE);
+        // let block = Block::bordered().border_set(border::DOUBLE);
         let layout_v = Layout::default()
             .direction(Direction::Vertical)
             .constraints([
                 Constraint::Fill(1),
-                Constraint::Length(constants::GAME_STATS_HEIGHT),
+                Constraint::Length(constants::TYPING_HEIGHT),
                 Constraint::Fill(1),
             ])
             .split(frame.area());
@@ -166,13 +192,17 @@ impl Menu {
             .direction(Direction::Horizontal)
             .constraints([
                 Constraint::Fill(1),
-                Constraint::Length(constants::GAME_STATS_WIDTH),
+                Constraint::Length(constants::TYPING_WIDTH),
                 Constraint::Fill(1),
             ])
             .split(layout_v[1]);
 
-        let [tabs_area, content] =
-            Layout::vertical([Constraint::Length(3), Constraint::Fill(1)]).areas(layout_h[1]);
+        let [tabs_area, quantity_area, _] = Layout::vertical([
+            Constraint::Length(1),
+            Constraint::Length(1),
+            Constraint::Fill(1),
+        ])
+        .areas(layout_h[1]);
 
         let [_, tabs_area, _] = Layout::horizontal([
             Constraint::Fill(1),
@@ -181,31 +211,49 @@ impl Menu {
         ])
         .areas(tabs_area);
 
+        let selected_tab: Option<usize>;
+        match self.selected {
+            Selected::Tabs => selected_tab = Some(self.page as usize),
+            Selected::Quantity => selected_tab = None,
+        }
+
         let tabs = Tabs::new(vec!["Words", "Time", "Quotes"])
             .style(Color::White)
-            .highlight_style(Style::default().magenta().on_black().bold())
-            .select(self.page as usize)
+            .highlight_style(Modifier::REVERSED)
+            .select(selected_tab)
             .divider(symbols::DOT)
             .padding("->", "<-");
 
         frame.render_widget(tabs, tabs_area);
 
-        match self.page {
-            MenuPage::Words => {
-                let text = "Words: ".to_string() + self.words_count.to_string().as_str();
-                let par = Paragraph::new(text).block(block);
-                frame.render_widget(par, content);
-            }
-            MenuPage::Time => {
-                let text = "Time: ".to_string() + self.time.to_string().as_str() + "s";
-                let par = Paragraph::new(text).block(block);
-                frame.render_widget(par, content);
-            }
-            MenuPage::Quote => {
-                let text = "todo";
-                let par = Paragraph::new(text).block(block);
-                frame.render_widget(par, content);
-            }
+        match self.selected {
+            Selected::Quantity => match self.page {
+                MenuPage::Words => {
+                    let text = "Words: ".to_string() + self.words_count.to_string().as_str();
+                    let quantity_tab = Tabs::new(vec![text])
+                        .style(Color::White)
+                        .highlight_style(Modifier::REVERSED)
+                        .select(0);
+                    frame.render_widget(quantity_tab, quantity_area);
+                }
+                MenuPage::Time => {
+                    let text = "Time: ".to_string() + self.time.to_string().as_str() + "s";
+                    let quantity_tab = Tabs::new(vec![text])
+                        .style(Color::White)
+                        .highlight_style(Modifier::REVERSED)
+                        .select(0);
+                    frame.render_widget(quantity_tab, quantity_area);
+                }
+                MenuPage::Quote => {
+                    let text = "todo";
+                    let quantity_tab = Tabs::new(vec![text])
+                        .style(Color::White)
+                        .highlight_style(Modifier::REVERSED)
+                        .select(0);
+                    frame.render_widget(quantity_tab, quantity_area);
+                }
+            },
+            _ => {}
         }
     }
 }
