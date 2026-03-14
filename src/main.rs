@@ -1,7 +1,7 @@
 use rand::prelude::*;
 use ratatui::widgets::{Axis, GraphType};
 use std::cmp::max;
-use std::time::{self, Duration, Instant};
+use std::time::{Duration, Instant};
 use std::{io, vec};
 
 mod constants;
@@ -372,7 +372,6 @@ impl Typ {
                 self.current_word += 1;
                 self.user_input.push("".to_string());
             } else {
-                self.end_time();
                 self.complete();
             }
         }
@@ -693,21 +692,20 @@ impl Typ {
         let wpm_text = Line::from(
             "WPM: ".to_string() + (self.wpm.last().unwrap().1 as u16).to_string().as_str(),
         );
-        let time_m = &self.time() / 60;
-        let time_s = &self.time() % 60;
+        let time_m = &self.end_time.unwrap() / 60;
+        let time_s = &self.end_time.unwrap() % 60;
         let time_text;
         if time_m == 0 {
-            time_text = Line::from(
-                "Time: ".to_string() + &self.end_time.unwrap().to_string() + &"s".to_string(),
-            );
+            time_text =
+                Line::from("Time: ".to_string() + time_s.to_string().as_str() + &"s".to_string());
         } else {
             time_text = Line::from(
                 "Time: ".to_string()
-                    + &time_m.to_string()
-                    + &"m".to_string()
-                    + &" ".to_string()
-                    + &time_s.to_string()
-                    + &"s".to_string(),
+                    + time_m.to_string().as_str()
+                    + "m".to_string().as_str()
+                    + " ".to_string().as_str()
+                    + time_s.to_string().as_str()
+                    + "s".to_string().as_str(),
             );
         }
         let block_numbers = Block::bordered().border_set(border::THICK);
@@ -735,6 +733,7 @@ impl Typ {
     }
 
     fn complete(&mut self) {
+        self.end_time();
         self.end = true;
     }
 
