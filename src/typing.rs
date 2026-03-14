@@ -4,8 +4,7 @@ use std::cmp::max;
 use std::time::Instant;
 use std::vec;
 
-mod constants;
-mod dict;
+use crate::{constants, dict};
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::{
@@ -18,6 +17,13 @@ use ratatui::{
 };
 
 #[derive(Debug)]
+struct ErrorEvent {
+    time_stamp: f64,
+    char: Option<char>,
+    word: String,
+}
+
+#[derive(Debug)]
 struct WordArray {
     data: Vec<Vec<char>>,
 }
@@ -27,17 +33,10 @@ impl WordArray {
         self.data.last().unwrap().is_empty()
     }
 
-    fn last_len(&self) -> Option<usize> {
-        match self.data.last() {
-            Some(v) => Some(v.len()),
-            None => None,
-        }
-    }
-
-    fn nth_len(&self, n: usize) -> Option<usize> {
+    fn nth_len(&self, n: usize) -> usize {
         match self.data.get(n) {
-            Some(v) => Some(v.len()),
-            None => None,
+            Some(v) => v.len(),
+            None => panic!(),
         }
     }
 
@@ -51,9 +50,9 @@ impl WordArray {
         }
     }
 
-    fn get_word(&self, pos: usize) -> Option<Vec<char>> {
+    fn get_word(&self, pos: usize) -> Option<String> {
         match self.data.get(pos) {
-            Some(v) => Some((*v).clone()),
+            Some(v) => Some((*v).clone().iter().collect()),
             None => None,
         }
     }
@@ -137,10 +136,11 @@ impl Default for Config {
 pub struct Typ {
     user_input: WordArray,
     target: WordArray,
+    line_word: Vec<(usize, usize)>,
     start_time: Option<Instant>,
     correct: u32,
     wpm: Vec<(f64, f64)>,
-    errors: Vec<f64>,
+    errors: Vec<ErrorEvent>,
     words_count: usize,
     current_word: usize,
     pub kind: Config,
@@ -154,6 +154,7 @@ impl Typ {
             Config::Time(time, dict) => Typ {
                 user_input: WordArray::default(),
                 target: WordArray::from(dict, time * 500 / 60),
+                line_word: Vec::new(),
                 start_time: None,
                 correct: 0,
                 wpm: Vec::new(),
@@ -167,6 +168,7 @@ impl Typ {
             Config::Words(words_count, dict) => Typ {
                 user_input: WordArray::default(),
                 target: WordArray::from(dict, *words_count),
+                line_word: Vec::new(),
                 start_time: None,
                 correct: 0,
                 wpm: Vec::new(),
@@ -183,6 +185,7 @@ impl Typ {
                 Typ {
                     user_input: WordArray::default(),
                     target: target,
+                    line_word: Vec::new(),
                     start_time: None,
                     correct: 0,
                     wpm: Vec::new(),
@@ -200,8 +203,10 @@ impl Typ {
     fn next_word(&mut self) {
         if !self.user_input.is_last_empty() {
             if self.words_count - 1 != self.current_word {
-                if self.user_input.last_len() < self.target.last_len() {
-                    self.error_incr();
+                if self.user_input.nth_len(self.current_word)
+                    < self.target.nth_len(self.current_word)
+                {
+                    self.error_incr(None, self.target.get_word(self.current_word).unwrap());
                 }
                 self.current_word += 1;
                 self.user_input.next_word();
@@ -217,16 +222,22 @@ impl Typ {
         }
         self.user_input.push_char(input);
 
-        match self
-            .target
-            .get_char((self.current_word, self.user_input.last_len().unwrap() - 1))
-        {
+        match self.target.get_char((
+            self.current_word,
+            self.user_input.nth_len(self.current_word) - 1,
+        )) {
             Some(c) => {
                 if c != input {
-                    self.error_incr();
+                    self.error_incr(
+                        Some(input),
+                        self.target.get_word(self.current_word).unwrap(),
+                    );
                 }
             }
-            None => self.error_incr(),
+            None => self.error_incr(
+                Some(input),
+                self.target.get_word(self.current_word).unwrap(),
+            ),
         }
 
         match self.start_time {
@@ -265,10 +276,14 @@ impl Typ {
         }
     }
 
-    fn error_incr(&mut self) {
+    fn error_incr(&mut self, char: Option<char>, word: String) {
         match self.start_time {
             Some(t) => {
-                self.errors.push(t.elapsed().as_secs_f64());
+                self.errors.push(ErrorEvent {
+                    time_stamp: t.elapsed().as_secs_f64(),
+                    char,
+                    word: word,
+                });
             }
             None => {}
         }
@@ -345,18 +360,44 @@ impl Typ {
         counter
     }
 
-    fn get_cur_pos(&self) -> u16 {
+    fn visible_range(&mut self) -> (usize, usize) {
+        let mut counter_lines = 0;
+        let mut counter_words = 0;
+        let mut current = self.get_cur_pos();
+        if current == 0 {
+            current = 1;
+        }
+        let mut left: Option<usize> = None;
+        let mut right: Option<usize> = None;
+        let limit: usize = (constants::TYPING_WIDTH - 2) as usize;
+        for i in 0..=self.target.len() {
+            let max_len = max(self.target.nth_len(i), self.user_input.nth_len(i));
+            if counter_words + 1 + max_len > limit {
+                counter_lines += 1;
+                counter_words = max_len;
+            } else {
+                counter_words += 1 + max_len;
+            }
+            if counter_lines == current - 1 || left == None {
+                left = Some(counter_lines);
+            }
+            if counter_lines == current + 1 || right == None {
+                right = Some(counter_lines);
+            }
+            // self.line_word.push((counter_lines, counter_words));
+        }
+        if right == None {
+            right = Some(self.target.len() - 1);
+        }
+        (left.unwrap(), right.unwrap())
+    }
+
+    fn get_cur_pos(&self) -> usize {
         let mut counter_lines = 0;
         let limit: usize = (constants::TYPING_WIDTH - 2) as usize;
-        let mut counter_words = max(
-            self.target.nth_len(0).unwrap(),
-            self.user_input.nth_len(0).unwrap(),
-        );
+        let mut counter_words = max(self.target.nth_len(0), self.user_input.nth_len(0));
         for i in 1..=self.current_word as usize {
-            let max_len = max(
-                self.target.nth_len(i).unwrap(),
-                self.user_input.nth_len(i).unwrap(),
-            );
+            let max_len = max(self.target.nth_len(i), self.user_input.nth_len(i));
             if counter_words + 1 + max_len > limit {
                 counter_lines += 1;
                 counter_words = max_len;
@@ -368,19 +409,13 @@ impl Typ {
     }
 
     fn is_end_line(&self) -> bool {
-        if self.user_input.last_len().unwrap() < self.target.last_len().unwrap() {
+        if self.user_input.nth_len(self.current_word) < self.target.nth_len(self.current_word) {
             return false;
         }
         let limit: usize = (constants::TYPING_WIDTH - 2) as usize;
-        let mut counter_words = max(
-            self.target.nth_len(0).unwrap(),
-            self.user_input.nth_len(0).unwrap(),
-        );
+        let mut counter_words = max(self.target.nth_len(0), self.user_input.nth_len(0));
         for i in 1..=self.current_word as usize {
-            let max_len = max(
-                self.target.nth_len(i).unwrap(),
-                self.user_input.nth_len(i).unwrap(),
-            );
+            let max_len = max(self.target.nth_len(i), self.user_input.nth_len(i));
             if counter_words + 1 + max_len > limit {
                 counter_words = max_len;
             } else {
@@ -465,7 +500,7 @@ impl Typ {
 
         let par = Paragraph::new(Text::from(Line::from(self.check_display())))
             .wrap(Wrap { trim: true })
-            .scroll((scroll_v, 0))
+            .scroll((scroll_v as u16, 0))
             .left_aligned()
             .block(block);
 
@@ -500,7 +535,7 @@ impl Typ {
         let graph_height = self.get_max_wpm() + 10.0;
         let mut errors: Vec<(f64, f64)> = Vec::new();
         for i in &self.errors {
-            errors.push((*i, graph_height / 50.0));
+            errors.push((i.time_stamp, graph_height / 50.0));
         }
         let dataset = vec![
             Dataset::default()
@@ -554,6 +589,13 @@ impl Typ {
         let block_numbers = Block::bordered().border_set(border::THICK);
         let par =
             Paragraph::new(Text::from(vec![error_text, time_text, wpm_text])).block(block_numbers);
+
+        // let mut words_err: Vec<Span> = Vec::new();
+        // for i in &self.errors {
+        //     words_err.push(Span::from(i.word.clone() + " "));
+        // }
+
+        // let par = Paragraph::new(Line::from(words_err));
 
         frame.render_widget(par, numbers);
     }
