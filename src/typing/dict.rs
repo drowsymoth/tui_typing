@@ -20,7 +20,7 @@ pub static DICT: &[&str] = &[
 ];
 pub static QUOTE: &str = "You have the power to heal your life, and you need to know that.";
 
-pub static ARTICLE: &str = "In computer architecture, a branch predictor is a digital circuit that tries to guess which way a branch (e.g., an if–then–else structure) will go before this is known definitively. The purpose of the branch predictor is to improve the flow in the instruction pipeline. Branch predictors play a critical role in achieving high performance in many modern pipelined microprocessor architectures.
+pub static article: &str = "In computer architecture, a branch predictor is a digital circuit that tries to guess which way a branch (e.g., an if–then–else structure) will go before this is known definitively. The purpose of the branch predictor is to improve the flow in the instruction pipeline. Branch predictors play a critical role in achieving high performance in many modern pipelined microprocessor architectures.
 
 Two-way branching is usually implemented with a conditional jump instruction. A conditional jump can either be \"taken\" and jump to a different place in program memory, or it can be \"not taken\" and continue execution immediately after the conditional jump. It is not known for certain whether a conditional jump will be taken or not taken until the condition has been calculated and the conditional jump has passed the execution stage in the instruction pipeline.
 
