@@ -36,7 +36,7 @@ impl WordArray {
     fn nth_len(&self, n: usize) -> usize {
         match self.data.get(n) {
             Some(v) => v.len(),
-            None => panic!(),
+            None => 0,
         }
     }
 
@@ -291,11 +291,10 @@ impl Typ {
 
     fn check_display(&self) -> Vec<Span> {
         let mut spans: Vec<Span> = Vec::new();
-        for (idx, (ts, us)) in self
-            .target
-            .data
+        let (start, end) = self.visible_range();
+        for (idx, (ts, us)) in self.target.data[start..end]
             .iter()
-            .zip(&self.user_input.data)
+            .zip(&self.user_input.data[start..])
             .enumerate()
         {
             for (tc, uc) in ts.iter().zip(us) {
@@ -312,7 +311,7 @@ impl Typ {
                 }
             }
             for tc in ts.iter().skip(us.len()) {
-                if idx == self.current_word as usize {
+                if idx >= self.current_word - start {
                     spans.push(Span::styled(
                         tc.to_string(),
                         Style::default().fg(Color::Black).bg(Color::DarkGray),
@@ -338,7 +337,10 @@ impl Typ {
             Style::default().bg(Color::DarkGray),
         ));
 
-        for ts in self.target.data.iter().skip(self.user_input.len()) {
+        for ts in self.target.data[start..end]
+            .iter()
+            .skip(self.user_input.len() - start)
+        {
             let temp: String = ts.into_iter().collect();
             spans.push(Span::styled(temp, Style::default().fg(Color::Gray)));
             spans.push(Span::styled(" ".to_string(), Style::default()));
@@ -360,7 +362,7 @@ impl Typ {
         counter
     }
 
-    fn visible_range(&mut self) -> (usize, usize) {
+    fn visible_range(&self) -> (usize, usize) {
         let mut counter_lines = 0;
         let mut counter_words = 0;
         let mut current = self.get_cur_pos();
@@ -378,16 +380,16 @@ impl Typ {
             } else {
                 counter_words += 1 + max_len;
             }
-            if counter_lines == current - 1 || left == None {
-                left = Some(counter_lines);
+            if counter_lines == current - 1 && left == None {
+                left = Some(i);
             }
-            if counter_lines == current + 1 || right == None {
-                right = Some(counter_lines);
+            if counter_lines == current + 2 {
+                right = Some(i);
+                break;
             }
-            // self.line_word.push((counter_lines, counter_words));
         }
         if right == None {
-            right = Some(self.target.len() - 1);
+            right = Some(self.target.len());
         }
         (left.unwrap(), right.unwrap())
     }
@@ -500,7 +502,7 @@ impl Typ {
 
         let par = Paragraph::new(Text::from(Line::from(self.check_display())))
             .wrap(Wrap { trim: true })
-            .scroll((scroll_v as u16, 0))
+            // .scroll((scroll_v as u16, 0))
             .left_aligned()
             .block(block);
 
