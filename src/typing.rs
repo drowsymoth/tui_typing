@@ -1,8 +1,8 @@
 use rand::prelude::*;
 use ratatui::widgets::{Axis, GraphType};
-use std::cmp::max;
 use std::time::Instant;
 use std::vec;
+use std::{cmp::max, ops::Sub};
 
 use crate::{constants, dict};
 
@@ -136,7 +136,7 @@ impl Default for Config {
 pub struct Typ {
     user_input: WordArray,
     target: WordArray,
-    line_word: Vec<(usize, usize)>,
+    visible_range: (usize, usize),
     start_time: Option<Instant>,
     correct: u32,
     wpm: Vec<(f64, f64)>,
@@ -151,46 +151,56 @@ pub struct Typ {
 impl Typ {
     pub fn new(kind: &Config) -> Self {
         match kind {
-            Config::Time(time, dict) => Typ {
-                user_input: WordArray::default(),
-                target: WordArray::from(dict, time * 500 / 60),
-                line_word: Vec::new(),
-                start_time: None,
-                correct: 0,
-                wpm: Vec::new(),
-                errors: Vec::new(),
-                words_count: time * 500 / 60,
-                current_word: 0,
-                kind: *kind,
-                end_time: None,
-                end: false,
-            },
-            Config::Words(words_count, dict) => Typ {
-                user_input: WordArray::default(),
-                target: WordArray::from(dict, *words_count),
-                line_word: Vec::new(),
-                start_time: None,
-                correct: 0,
-                wpm: Vec::new(),
-                errors: Vec::new(),
-                words_count: *words_count,
-                current_word: 0,
-                kind: *kind,
-                end_time: None,
-                end: false,
-            },
-            Config::Quote(quote) => {
-                let target = WordArray::quote(quote);
-                let target_len = target.len();
+            Config::Time(time, dict) => {
+                let words_count: usize = time * 500 / 60;
+                let target = WordArray::from(dict, words_count);
+                let visible_range = Typ::visible_range_initial(&target);
                 Typ {
                     user_input: WordArray::default(),
                     target: target,
-                    line_word: Vec::new(),
+                    visible_range: visible_range,
                     start_time: None,
                     correct: 0,
                     wpm: Vec::new(),
                     errors: Vec::new(),
-                    words_count: target_len,
+                    words_count: words_count,
+                    current_word: 0,
+                    kind: *kind,
+                    end_time: None,
+                    end: false,
+                }
+            }
+            Config::Words(words_count, dict) => {
+                let target = WordArray::from(dict, *words_count);
+                let visible_range = Typ::visible_range_initial(&target);
+                Typ {
+                    user_input: WordArray::default(),
+                    target: target,
+                    visible_range: visible_range,
+                    start_time: None,
+                    correct: 0,
+                    wpm: Vec::new(),
+                    errors: Vec::new(),
+                    words_count: *words_count,
+                    current_word: 0,
+                    kind: *kind,
+                    end_time: None,
+                    end: false,
+                }
+            }
+            Config::Quote(quote) => {
+                let target = WordArray::quote(quote);
+                let words_count = target.len();
+                let visible_range = Typ::visible_range_initial(&target);
+                Typ {
+                    user_input: WordArray::default(),
+                    target: target,
+                    visible_range: visible_range,
+                    start_time: None,
+                    correct: 0,
+                    wpm: Vec::new(),
+                    errors: Vec::new(),
+                    words_count: words_count,
                     current_word: 0,
                     kind: *kind,
                     end_time: None,
@@ -214,9 +224,11 @@ impl Typ {
                 self.complete();
             }
         }
+        self.visible_range_update();
     }
 
     fn add_char(&mut self, input: char) {
+        self.visible_range_update();
         if self.is_end_line() {
             return;
         }
@@ -291,8 +303,8 @@ impl Typ {
 
     fn check_display(&self) -> Vec<Span> {
         let mut spans: Vec<Span> = Vec::new();
-        let (start, end) = self.visible_range();
-        for (idx, (ts, us)) in self.target.data[start..end]
+        let (start, end) = self.visible_range;
+        for (idx, (ts, us)) in self.target.data[start..=end]
             .iter()
             .zip(&self.user_input.data[start..])
             .enumerate()
@@ -337,7 +349,7 @@ impl Typ {
             Style::default().bg(Color::DarkGray),
         ));
 
-        for ts in self.target.data[start..end]
+        for ts in self.target.data[start..=end]
             .iter()
             .skip(self.user_input.len() - start)
         {
@@ -362,17 +374,37 @@ impl Typ {
         counter
     }
 
-    fn visible_range(&self) -> (usize, usize) {
-        let mut counter_lines = 0;
-        let mut counter_words = 0;
+    fn visible_range_initial(target: &WordArray) -> (usize, usize) {
+        let (mut counter_lines, mut counter_words) = (0, 0);
+        let current = 1;
+        let mut right: usize = target.len() - 1;
+        let limit: usize = (constants::TYPING_WIDTH - 2) as usize;
+        for i in 0..target.len() {
+            let max_len = target.nth_len(i);
+            if counter_words + 1 + max_len > limit {
+                counter_lines += 1;
+                counter_words = max_len;
+            } else {
+                counter_words += 1 + max_len;
+            }
+            if counter_lines == current + 2 {
+                right = i;
+                break;
+            }
+        }
+        (0, right)
+    }
+
+    fn visible_range_update(&mut self) {
+        let (mut counter_lines, mut counter_words) = (0, 0);
         let mut current = self.get_cur_pos();
         if current == 0 {
             current = 1;
         }
         let mut left: Option<usize> = None;
-        let mut right: Option<usize> = None;
+        let mut right: usize = self.target.len() - 1;
         let limit: usize = (constants::TYPING_WIDTH - 2) as usize;
-        for i in 0..=self.target.len() {
+        for i in 0..self.target.len() {
             let max_len = max(self.target.nth_len(i), self.user_input.nth_len(i));
             if counter_words + 1 + max_len > limit {
                 counter_lines += 1;
@@ -380,25 +412,21 @@ impl Typ {
             } else {
                 counter_words += 1 + max_len;
             }
-            if counter_lines == current - 1 && left == None {
+            if counter_lines == current + 2 {
+                right = i;
+                break;
+            } else if counter_lines == current - 1 && left == None {
                 left = Some(i);
             }
-            if counter_lines == current + 2 {
-                right = Some(i);
-                break;
-            }
         }
-        if right == None {
-            right = Some(self.target.len());
-        }
-        (left.unwrap(), right.unwrap())
+        self.visible_range = (left.unwrap_or(0), right);
     }
 
     fn get_cur_pos(&self) -> usize {
         let mut counter_lines = 0;
+        let mut counter_words = 0;
         let limit: usize = (constants::TYPING_WIDTH - 2) as usize;
-        let mut counter_words = max(self.target.nth_len(0), self.user_input.nth_len(0));
-        for i in 1..=self.current_word as usize {
+        for i in 0..=self.current_word as usize {
             let max_len = max(self.target.nth_len(i), self.user_input.nth_len(i));
             if counter_words + 1 + max_len > limit {
                 counter_lines += 1;
@@ -494,11 +522,6 @@ impl Typ {
                 Constraint::Fill(1),
             ])
             .split(layout_v[1]);
-
-        let mut scroll_v = self.get_cur_pos();
-        if scroll_v > 0 {
-            scroll_v -= 1;
-        }
 
         let par = Paragraph::new(Text::from(Line::from(self.check_display())))
             .wrap(Wrap { trim: true })
