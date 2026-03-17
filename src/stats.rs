@@ -1,4 +1,5 @@
 use crate::constants;
+use crossterm::event::{KeyCode, KeyEvent};
 use ratatui::{
     layout::{Constraint, Direction, Layout},
     style::{Color, Style, Stylize},
@@ -8,6 +9,14 @@ use ratatui::{
     Frame,
 };
 use std::time::Instant;
+
+#[derive(Debug)]
+pub enum StatsCall {
+    Again,
+    ToMenu,
+    Exit,
+    None,
+}
 
 #[derive(Debug)]
 struct ErrorEvent {
@@ -240,5 +249,14 @@ impl Stats {
         // let par = Paragraph::new(Line::from(words_err));
 
         frame.render_widget(par, numbers);
+    }
+
+    pub fn handle_key_event(&self, key_event: KeyEvent) -> StatsCall {
+        match key_event.code {
+            KeyCode::Esc => StatsCall::ToMenu,
+            KeyCode::Enter => StatsCall::Again,
+            KeyCode::Char('q') => StatsCall::Exit,
+            _ => StatsCall::None,
+        }
     }
 }

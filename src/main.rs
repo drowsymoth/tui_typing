@@ -8,9 +8,10 @@ mod stats;
 mod typing;
 
 use menu::{Menu, MenuCall};
+use stats::StatsCall;
 use typing::{Config, Typ, TypCall};
 
-use crossterm::event::{self, Event, KeyCode, KeyEventKind};
+use crossterm::event::{self, Event, KeyEventKind};
 use ratatui::{DefaultTerminal, Frame};
 
 fn main() -> io::Result<()> {
@@ -45,29 +46,44 @@ impl App {
         let mut last_tick = Instant::now();
         let mut last_wpm_check = Instant::now();
         while !self.exit {
-            if self.game.is_end() {
-                self.state = State::GameStats
-            }
-
             terminal.draw(|frame| self.draw(frame))?;
 
-            if last_wpm_check.elapsed() >= Duration::from_secs(1) {
-                match self.state {
-                    State::Typing => self.game.stats.add_wpm_sample(),
-                    _ => {}
-                }
-                last_wpm_check = Instant::now();
-            }
-
-            match self.config {
-                Config::Time(t, _) => {
-                    if self.game.stats.is_time_end(t as u32) {
-                        self.game.complete();
-                        self.state = State::GameStats;
+            match self.state {
+                State::Typing => {
+                    if self.game.is_end() {
+                        self.state = State::GameStats
+                    }
+                    if last_wpm_check.elapsed() >= Duration::from_secs(1) {
+                        self.game.stats.add_wpm_sample();
+                        last_wpm_check = Instant::now();
+                    }
+                    if let Config::Time(t, _) = self.config {
+                        if self.game.stats.is_time_end(t as u32) {
+                            self.game.complete();
+                            self.state = State::GameStats;
+                        }
                     }
                 }
+
                 _ => {}
             }
+            // if last_wpm_check.elapsed() >= Duration::from_secs(1) {
+            //     match self.state {
+            //         State::Typing => self.game.stats.add_wpm_sample(),
+            //         _ => {}
+            //     }
+            //     last_wpm_check = Instant::now();
+            // }
+
+            // match self.config {
+            //     Config::Time(t, _) => {
+            //         if self.game.stats.is_time_end(t as u32) {
+            //             self.game.complete();
+            //             self.state = State::GameStats;
+            //         }
+            //     }
+            //     _ => {}
+            // }
 
             let timeout = tick_rate
                 .checked_sub(last_tick.elapsed())
@@ -111,9 +127,14 @@ impl App {
                         }
                         MenuCall::None => {}
                     },
-                    State::GameStats => match key_event.code {
-                        KeyCode::Char('q') => self.exit(),
-                        _ => {}
+                    State::GameStats => match self.game.stats.handle_key_event(key_event) {
+                        StatsCall::ToMenu => self.state = State::Menu,
+                        StatsCall::Again => {
+                            self.game = Typ::new(&self.config);
+                            self.state = State::Typing
+                        }
+                        StatsCall::Exit => self.exit(),
+                        StatsCall::None => {}
                     },
                 }
                 // self.handle_key_event(key_event)
