@@ -1,21 +1,17 @@
+use std::io;
 use std::time::{Duration, Instant};
-use std::{io, vec};
 
 mod constants;
 mod dict;
 mod menu;
+mod stats;
 mod typing;
 
 use menu::{Menu, MenuCall};
-use typing::{Config, Typ};
+use typing::{Config, Typ, TypCall};
 
-use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind};
-use ratatui::{
-    layout::{Constraint, Direction, Layout},
-    style::{Color, Modifier, Style},
-    text::{Line, Span},
-    DefaultTerminal, Frame,
-};
+use crossterm::event::{self, Event, KeyCode, KeyEventKind};
+use ratatui::{DefaultTerminal, Frame};
 
 fn main() -> io::Result<()> {
     ratatui::run(|terminal| App::default().run(terminal))
@@ -57,14 +53,19 @@ impl App {
 
             if last_wpm_check.elapsed() >= Duration::from_secs(1) {
                 match self.state {
-                    State::Typing => self.game.wpm_sample(),
+                    State::Typing => self.game.stats.add_wpm_sample(),
                     _ => {}
                 }
                 last_wpm_check = Instant::now();
             }
 
-            match self.game.kind {
-                Config::Time(_, _) => self.game.check_time(),
+            match self.config {
+                Config::Time(t, _) => {
+                    if self.game.stats.is_time_end(t as u32) {
+                        self.game.complete();
+                        self.state = State::GameStats;
+                    }
+                }
                 _ => {}
             }
 
@@ -87,7 +88,7 @@ impl App {
         match self.state {
             State::Menu => self.menu.render_menu(frame),
             State::Typing => self.game.render_text(frame),
-            State::GameStats => self.game.render_game_stats(frame),
+            State::GameStats => self.game.stats.render_game_stats(frame),
             // _ => panic!(),
         }
     }
@@ -96,22 +97,24 @@ impl App {
         match event::read()? {
             Event::Key(key_event) if key_event.kind == KeyEventKind::Press => {
                 match self.state {
-                    State::Typing => {
-                        self.game.handle_key_event(key_event);
-                    }
+                    State::Typing => match self.game.handle_key_event(key_event) {
+                        TypCall::ToMenu => self.state = State::Menu,
+                        TypCall::Restart => self.game = Typ::new(&self.config),
+                        _ => {}
+                    },
                     State::Menu => match self.menu.handle_key_event(key_event) {
                         MenuCall::Exit => self.exit(),
                         MenuCall::Start(s) => {
+                            self.config = s;
                             self.game = Typ::new(&s);
                             self.state = State::Typing;
                         }
-                        _ => {}
+                        MenuCall::None => {}
                     },
                     State::GameStats => match key_event.code {
                         KeyCode::Char('q') => self.exit(),
                         _ => {}
                     },
-                    _ => {}
                 }
                 // self.handle_key_event(key_event)
             }

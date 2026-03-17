@@ -1,26 +1,24 @@
 use rand::prelude::*;
-use ratatui::widgets::{Axis, GraphType};
-use std::time::Instant;
+use std::cmp::max;
 use std::vec;
-use std::{cmp::max, ops::Sub};
 
-use crate::{constants, dict};
+use crate::{constants, dict, stats::Stats};
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::{
     layout::{Constraint, Direction, Layout},
-    style::{Color, Style, Stylize},
-    symbols::{self, border},
+    style::{Color, Style},
+    symbols::border,
     text::{Line, Span, Text},
-    widgets::{Block, Chart, Dataset, Paragraph, Wrap},
+    widgets::{Block, Paragraph, Wrap},
     Frame,
 };
 
 #[derive(Debug)]
-struct ErrorEvent {
-    time_stamp: f64,
-    char: Option<char>,
-    word: String,
+pub enum TypCall {
+    ToMenu,
+    Restart,
+    None,
 }
 
 #[derive(Debug)]
@@ -137,14 +135,10 @@ pub struct Typ {
     user_input: WordArray,
     target: WordArray,
     visible_range: (usize, usize),
-    start_time: Option<Instant>,
-    correct: u32,
-    wpm: Vec<(f64, f64)>,
-    errors: Vec<ErrorEvent>,
+    pub stats: Stats,
     words_count: usize,
     current_word: usize,
-    pub kind: Config,
-    end_time: Option<u32>,
+    // kind: Config,
     end: bool,
 }
 
@@ -159,14 +153,10 @@ impl Typ {
                     user_input: WordArray::default(),
                     target: target,
                     visible_range: visible_range,
-                    start_time: None,
-                    correct: 0,
-                    wpm: Vec::new(),
-                    errors: Vec::new(),
+                    stats: Stats::new(),
                     words_count: words_count,
                     current_word: 0,
-                    kind: *kind,
-                    end_time: None,
+                    // kind: *kind,
                     end: false,
                 }
             }
@@ -177,14 +167,10 @@ impl Typ {
                     user_input: WordArray::default(),
                     target: target,
                     visible_range: visible_range,
-                    start_time: None,
-                    correct: 0,
-                    wpm: Vec::new(),
-                    errors: Vec::new(),
+                    stats: Stats::new(),
                     words_count: *words_count,
                     current_word: 0,
-                    kind: *kind,
-                    end_time: None,
+                    // kind: *kind,
                     end: false,
                 }
             }
@@ -196,14 +182,10 @@ impl Typ {
                     user_input: WordArray::default(),
                     target: target,
                     visible_range: visible_range,
-                    start_time: None,
-                    correct: 0,
-                    wpm: Vec::new(),
-                    errors: Vec::new(),
+                    stats: Stats::new(),
                     words_count: words_count,
                     current_word: 0,
-                    kind: *kind,
-                    end_time: None,
+                    // kind: *kind,
                     end: false,
                 }
             }
@@ -216,7 +198,8 @@ impl Typ {
                 if self.user_input.nth_len(self.current_word)
                     < self.target.nth_len(self.current_word)
                 {
-                    self.error_incr(None, self.target.get_word(self.current_word).unwrap());
+                    self.stats
+                        .error_incr(None, self.target.get_word(self.current_word).unwrap());
                 }
                 self.current_word += 1;
                 self.user_input.next_word();
@@ -240,23 +223,20 @@ impl Typ {
         )) {
             Some(c) => {
                 if c != input {
-                    self.error_incr(
+                    self.stats.error_incr(
                         Some(input),
                         self.target.get_word(self.current_word).unwrap(),
                     );
                 }
             }
-            None => self.error_incr(
+            None => self.stats.error_incr(
                 Some(input),
                 self.target.get_word(self.current_word).unwrap(),
             ),
         }
 
-        match self.start_time {
-            None => self.set_start_time(),
-            _ => {}
-        }
-        self.correct = self.check_correct();
+        self.stats.start_time();
+        self.stats.set_correct(self.check_correct());
     }
 
     fn delete_char(&mut self) {
@@ -285,19 +265,6 @@ impl Typ {
             self.current_word -= 1;
         } else if !self.user_input.is_last_empty() {
             self.user_input.clear_nth(self.current_word);
-        }
-    }
-
-    fn error_incr(&mut self, char: Option<char>, word: String) {
-        match self.start_time {
-            Some(t) => {
-                self.errors.push(ErrorEvent {
-                    time_stamp: t.elapsed().as_secs_f64(),
-                    char,
-                    word: word,
-                });
-            }
-            None => {}
         }
     }
 
@@ -455,50 +422,18 @@ impl Typ {
         counter_words >= (constants::TYPING_WIDTH - 2) as usize
     }
 
-    fn set_start_time(&mut self) {
-        self.start_time = Some(Instant::now());
-    }
-
-    pub fn wpm(&self) -> f32 {
-        let mut wpm = 0.0;
-        match self.start_time {
-            Some(t) => {
-                let elapsed = t.elapsed().as_secs_f32();
-                wpm = self.correct as f32 / 5.0 / (elapsed / 60.0);
-            }
-            None => {}
-        }
-        wpm
-    }
-
-    fn get_accur(&self) -> u8 {
-        let mut accur = 0;
-        let error_count = self.errors.len();
-        if self.current_word > error_count {
-            accur =
-                ((self.correct - error_count as u32) as f32 * 100.0 / self.correct as f32) as u8;
-        }
-        accur
-    }
-
     pub fn render_text(&self, frame: &mut Frame) {
-        let mut title = Line::from(" Time: 0s ");
-        match self.start_time {
-            Some(t) => {
-                title = Line::from(vec![
-                    " Time: ".into(),
-                    t.elapsed().as_secs().to_string().into(),
-                    "s ".into(),
-                ]);
-            }
-            None => {}
-        }
+        let title = Line::from(vec![
+            " Time: ".into(),
+            self.stats.time().to_string().into(),
+            "s ".into(),
+        ]);
         let instructions = Line::from(vec![
             " WPM: ".into(),
-            (self.wpm() as u16).to_string().into(),
+            (self.stats.wpm() as u16).to_string().into(),
             " ".into(),
             " Accuracy: ".into(),
-            self.get_accur().to_string().into(),
+            self.stats.get_accur(self.current_word).to_string().into(),
             "% ".into(),
         ]);
         let block = Block::bordered()
@@ -525,131 +460,24 @@ impl Typ {
 
         let par = Paragraph::new(Text::from(Line::from(self.check_display())))
             .wrap(Wrap { trim: true })
-            // .scroll((scroll_v as u16, 0))
             .left_aligned()
             .block(block);
 
         frame.render_widget(par, layout_h[1]);
     }
 
-    pub fn render_game_stats(&self, frame: &mut Frame) {
-        let title = Line::from(" Suffer Fag ".bold());
-        let block = Block::bordered()
-            .title(title.centered())
-            .border_set(border::THICK);
-        let layout_v = Layout::default()
-            .direction(Direction::Vertical)
-            .constraints([
-                Constraint::Fill(1),
-                Constraint::Length(constants::GAME_STATS_HEIGHT),
-                Constraint::Fill(1),
-            ])
-            .split(frame.area());
-
-        let layout_h = Layout::default()
-            .direction(Direction::Horizontal)
-            .constraints([
-                Constraint::Fill(1),
-                Constraint::Length(constants::GAME_STATS_WIDTH),
-                Constraint::Fill(1),
-            ])
-            .split(layout_v[1]);
-        let [graph, numbers] =
-            Layout::vertical([Constraint::Fill(1), Constraint::Fill(1)]).areas(layout_h[1]);
-
-        let graph_height = self.get_max_wpm() + 10.0;
-        let mut errors: Vec<(f64, f64)> = Vec::new();
-        for i in &self.errors {
-            errors.push((i.time_stamp, graph_height / 50.0));
-        }
-        let dataset = vec![
-            Dataset::default()
-                .name("wpm")
-                .marker(symbols::Marker::Braille)
-                .style(Style::default().fg(Color::Gray))
-                .graph_type(GraphType::Line)
-                .data(&self.wpm),
-            Dataset::default()
-                .name("err")
-                .marker(symbols::Marker::Quadrant)
-                .style(Style::default().fg(Color::Red))
-                .graph_type(GraphType::Bar)
-                .data(&errors),
-        ];
-
-        let chart = Chart::new(dataset)
-            .block(block)
-            .x_axis(
-                Axis::default()
-                    .title("Time")
-                    .bounds([1.0, self.wpm.last().unwrap().0]),
-            )
-            .y_axis(
-                Axis::default()
-                    .title("WPM")
-                    .bounds([0.0, self.get_max_wpm() + 10.0]),
-            );
-
-        frame.render_widget(chart, graph);
-        let error_text = Line::from("Errors: ".to_string() + &self.errors.len().to_string());
-        let wpm_text = Line::from(
-            "WPM: ".to_string() + (self.wpm.last().unwrap().1 as u16).to_string().as_str(),
-        );
-        let time_m = &self.end_time.unwrap() / 60;
-        let time_s = &self.end_time.unwrap() % 60;
-        let time_text;
-        if time_m == 0 {
-            time_text =
-                Line::from("Time: ".to_string() + time_s.to_string().as_str() + &"s".to_string());
-        } else {
-            time_text = Line::from(
-                "Time: ".to_string()
-                    + time_m.to_string().as_str()
-                    + "m".to_string().as_str()
-                    + " ".to_string().as_str()
-                    + time_s.to_string().as_str()
-                    + "s".to_string().as_str(),
-            );
-        }
-        let block_numbers = Block::bordered().border_set(border::THICK);
-        let par =
-            Paragraph::new(Text::from(vec![error_text, time_text, wpm_text])).block(block_numbers);
-
-        // let mut words_err: Vec<Span> = Vec::new();
-        // for i in &self.errors {
-        //     words_err.push(Span::from(i.word.clone() + " "));
-        // }
-
-        // let par = Paragraph::new(Line::from(words_err));
-
-        frame.render_widget(par, numbers);
-    }
-
-    fn get_max_wpm(&self) -> f64 {
-        let mut max: f64 = 0.0;
-        for i in &self.wpm {
-            if i.1 > max {
-                max = i.1;
-            }
-        }
-        max
-    }
-
-    fn time(&self) -> u32 {
-        match self.start_time {
-            Some(t) => t.elapsed().as_secs() as u32,
-            None => 0,
-        }
-    }
-
-    fn complete(&mut self) {
-        self.end_time();
+    pub fn complete(&mut self) {
+        self.stats.end_time();
         self.end = true;
     }
 
-    pub fn handle_key_event(&mut self, key_event: KeyEvent) {
+    pub fn handle_key_event(&mut self, key_event: KeyEvent) -> TypCall {
         match key_event.code {
-            KeyCode::Char(' ') => self.next_word(),
+            KeyCode::Esc => return TypCall::ToMenu,
+            KeyCode::Enter => return TypCall::Restart,
+            KeyCode::Char(' ') => {
+                self.next_word();
+            }
             KeyCode::Backspace if key_event.modifiers.contains(KeyModifiers::CONTROL) => {
                 self.delete_word()
             }
@@ -660,47 +488,11 @@ impl Typ {
             KeyCode::Char(c) => self.add_char(c),
             _ => {}
         }
-    }
-
-    pub fn check_time(&mut self) {
-        match self.kind {
-            Config::Time(t, _) => {
-                if t <= self.time() as usize {
-                    self.end_time();
-                    self.complete();
-                }
-            }
-            _ => panic!(),
-        }
-    }
-
-    fn end_time(&mut self) -> u32 {
-        match self.end_time {
-            Some(t) => t,
-            None => {
-                let time = self.time();
-                self.end_time = Some(time);
-                time
-            }
-        }
+        TypCall::None
     }
 
     pub fn is_end(&self) -> bool {
         self.end
-    }
-
-    pub fn start_time(&self) -> Option<Instant> {
-        self.start_time
-    }
-
-    pub fn wpm_sample(&mut self) {
-        match self.start_time() {
-            Some(t) => {
-                self.wpm
-                    .push((t.elapsed().as_secs_f64(), self.wpm() as f64));
-            }
-            _ => {}
-        }
     }
 }
 
