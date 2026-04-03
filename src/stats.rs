@@ -46,7 +46,7 @@ pub struct Stats {
     errors: Vec<ErrorEvent>,
     wpm: Vec<Wpm>,
     start_time: Option<Instant>,
-    end_time: Option<u32>,
+    end_time: Option<Instant>,
     correct: u32,
 }
 
@@ -65,6 +65,12 @@ impl Stats {
         match self.start_time {
             None => self.start_time = Some(Instant::now()),
             _ => {}
+        }
+    }
+
+    pub fn set_end_time(&mut self) {
+        if self.end_time.is_none(){
+            self.end_time = Some(Instant::now());
         }
     }
 
@@ -133,26 +139,6 @@ impl Stats {
         }
     }
 
-    pub fn end_time(&mut self) -> u32 {
-        match self.end_time {
-            Some(t) => t,
-            None => {
-                let time = self.time();
-                self.end_time = Some(time);
-                time
-            }
-        }
-    }
-
-    pub fn is_time_end(&mut self, t: u32) -> bool {
-        if t <= self.time() {
-            self.end_time();
-            true
-        } else {
-            false
-        }
-    }
-
     pub fn set_correct(&mut self, value: u32) {
         self.correct = value;
     }
@@ -217,37 +203,20 @@ impl Stats {
             );
 
         frame.render_widget(chart, graph);
-        let error_text = Line::from("Errors: ".to_string() + &self.errors.len().to_string());
-        let wpm_text = Line::from(
-            "WPM: ".to_string() + (self.wpm.last().unwrap().value as u16).to_string().as_str(),
-        );
-        let time_m = &self.end_time.unwrap() / 60;
-        let time_s = &self.end_time.unwrap() % 60;
+        let error_text = Line::from(format!("Erros: {}", self.errors.len()));
+        let wpm_text = Line::from(format!("WPM: {:.0}", self.wpm.last().unwrap().value));
+        let time = self.end_time.unwrap().duration_since(self.start_time.unwrap()).as_secs();
+        let time_m = time / 60;
+        let time_s = time % 60;
         let time_text;
         if time_m == 0 {
-            time_text =
-                Line::from("Time: ".to_string() + time_s.to_string().as_str() + &"s".to_string());
+            time_text = Line::from(format!("Time: {}s", time_s));
         } else {
-            time_text = Line::from(
-                "Time: ".to_string()
-                    + time_m.to_string().as_str()
-                    + "m".to_string().as_str()
-                    + " ".to_string().as_str()
-                    + time_s.to_string().as_str()
-                    + "s".to_string().as_str(),
-            );
+            time_text = Line::from(format!("Time: {}m {}s", time_m, time_s));
         }
         let block_numbers = Block::bordered().border_set(border::THICK);
         let par =
             Paragraph::new(Text::from(vec![error_text, time_text, wpm_text])).block(block_numbers);
-
-        // let mut words_err: Vec<Span> = Vec::new();
-        // for i in &self.errors {
-        //     words_err.push(Span::from(i.word.clone() + " "));
-        // }
-
-        // let par = Paragraph::new(Line::from(words_err));
-
         frame.render_widget(par, numbers);
     }
 

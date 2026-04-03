@@ -1,13 +1,16 @@
-use std::vec;
+use std::{fmt::Formatter, vec};
 
-use crate::{constants, dict, Config};
+use crate::{
+    Config, constants,
+    dict::{self, ARTICLES},
+};
 
 use crossterm::event::{KeyCode, KeyEvent};
 use ratatui::{
+    Frame,
     layout::{Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span},
-    Frame,
 };
 
 #[derive(Default, Debug, Clone, Copy)]
@@ -76,6 +79,7 @@ pub struct Menu {
     page: MenuPage,
     words_count: usize,
     time: usize,
+    article: usize,
     selected: Selected,
 }
 
@@ -85,6 +89,7 @@ impl Menu {
             page: MenuPage::Words,
             words_count: 100,
             time: 30,
+            article: 0,
             selected: Selected::Tabs,
         }
     }
@@ -94,10 +99,7 @@ impl Menu {
             KeyCode::Enter => match self.page {
                 MenuPage::Words => MenuCall::Start(Config::Words(self.words_count, dict::DICT)),
                 MenuPage::Time => MenuCall::Start(Config::Time(self.time, dict::DICT)),
-                MenuPage::Quote => {
-                    //TODO
-                    MenuCall::None
-                }
+                MenuPage::Quote => MenuCall::Start(Config::Quote(dict::ARTICLES[self.article])),
             },
             KeyCode::Char('j') => {
                 match self.selected.next() {
@@ -143,7 +145,9 @@ impl Menu {
                     }
                 }
                 MenuPage::Quote => {
-                    //TODO
+                    if self.article > 0 {
+                        self.article -= 1;
+                    }
                 }
             },
         }
@@ -162,7 +166,9 @@ impl Menu {
                     self.time += 10;
                 }
                 MenuPage::Quote => {
-                    //TODO
+                    if self.article < ARTICLES.len() - 1 {
+                        self.article += 1;
+                    }
                 }
             },
         }
@@ -240,7 +246,7 @@ impl Menu {
 
         match self.page {
             MenuPage::Words => {
-                let text = "<".to_string() + self.words_count.to_string().as_str() + ">";
+                let text = format!("<{}>", self.words_count);
                 let shift = Span::styled(" ".repeat(type_len), Style::new());
                 let quantity = Span::styled(text, {
                     match self.selected {
@@ -252,7 +258,7 @@ impl Menu {
                 frame.render_widget(line, quantity_area);
             }
             MenuPage::Time => {
-                let text = "<".to_string() + self.time.to_string().as_str() + "s" + ">";
+                let text = format!("<{}>", self.time);
                 let shift = Span::styled(
                     " ".repeat(type_len + MenuPage::Time.title().len() + 4),
                     Style::new(),
@@ -267,8 +273,21 @@ impl Menu {
                 frame.render_widget(line, quantity_area);
             }
             MenuPage::Quote => {
-                let text = "todo";
-                frame.render_widget(Line::from(text), quantity_area);
+                let text = format!("<Article {}>", self.article);
+                let shift = Span::styled(
+                    " ".repeat(
+                        type_len + MenuPage::Time.title().len() + MenuPage::Words.title().len() + 6,
+                    ),
+                    Style::new(),
+                );
+                let quantity = Span::styled(text, {
+                    match self.selected {
+                        Selected::Tabs => Modifier::HIDDEN,
+                        Selected::Quantity => Modifier::REVERSED,
+                    }
+                });
+                let line = Line::from(vec![shift, quantity]);
+                frame.render_widget(line, quantity_area);
             }
         }
     }

@@ -20,7 +20,9 @@ pub static DICT: &[&str] = &[
 ];
 pub static QUOTE: &str = "You have the power to heal your life, and you need to know that.";
 
-pub static ARTICLE: &str = "In computer architecture, a branch predictor is a digital circuit that tries to guess which way a branch (e.g., an if–then–else structure) will go before this is known definitively. The purpose of the branch predictor is to improve the flow in the instruction pipeline. Branch predictors play a critical role in achieving high performance in many modern pipelined microprocessor architectures.
+pub static ARTICLES: &[&str] = &[
+
+"In computer architecture, a branch predictor is a digital circuit that tries to guess which way a branch (e.g., an if-then-else structure) will go before this is known definitively. The purpose of the branch predictor is to improve the flow in the instruction pipeline. Branch predictors play a critical role in achieving high performance in many modern pipelined microprocessor architectures.
 
 Two-way branching is usually implemented with a conditional jump instruction. A conditional jump can either be \"taken\" and jump to a different place in program memory, or it can be \"not taken\" and continue execution immediately after the conditional jump. It is not known for certain whether a conditional jump will be taken or not taken until the condition has been calculated and the conditional jump has passed the execution stage in the instruction pipeline.
 
@@ -30,4 +32,11 @@ The time that is wasted in case of a branch misprediction is equal to the number
 
 The first time a conditional jump instruction is encountered, there is not much information to base a prediction on. However, the branch predictor keeps records of whether or not branches are taken, so when it encounters a conditional jump that has been seen several times before, it can base the prediction on the recorded history. The branch predictor may, for example, recognize that the conditional jump is taken more often than not, or that it is taken every second time.
 
-Branch prediction is not the same as branch target prediction. Branch prediction attempts to guess whether a conditional jump will be taken or not. Branch target prediction attempts to guess the target of a taken conditional or unconditional jump before it is computed by decoding and executing the instruction itself. Branch prediction and branch target prediction are often combined into the same circuitry.";
+Branch prediction is not the same as branch target prediction. Branch prediction attempts to guess whether a conditional jump will be taken or not. Branch target prediction attempts to guess the target of a taken conditional or unconditional jump before it is computed by decoding and executing the instruction itself. Branch prediction and branch target prediction are often combined into the same circuitry."
+,
+"In computability theory, a system of data-manipulation rules (such as a model of computation, a computer's instruction set, a programming language, or a cellular automaton) is said to be Turing-complete or computationally universal if it can be used to simulate any Turing machine (devised by English mathematician and computer scientist Alan Turing). This means that this system is able to recognize or decode other data-manipulation rule sets. Turing completeness is used as a way to express the power of such a data-manipulation rule set. Virtually all programming languages today are Turing-complete.
+
+A related concept is that of Turing equivalence - two computers P and Q are called equivalent if P can simulate Q and Q can simulate P. The Church-Turing thesis conjectures that any function whose values can be computed by an algorithm can be computed by a Turing machine, and therefore that if any real-world computer can simulate a Turing machine, it is Turing equivalent to a Turing machine. A universal Turing machine can be used to simulate any Turing machine and by extension the purely computational aspects of any possible real-world computer.
+
+To show that something is Turing-complete, it is enough to demonstrate that it can be used to simulate some Turing-complete system. No physical system can have infinite memory, but if the limitation of finite memory is ignored, most programming languages are otherwise Turing-complete."
+];

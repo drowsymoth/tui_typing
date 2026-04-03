@@ -1379,6 +1379,7 @@ dependencies = [
  "crossterm",
  "rand 0.10.0",
  "ratatui",
+ "serde",
 ]
 
 [[package]]

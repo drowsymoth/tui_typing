@@ -6,12 +6,12 @@ use crate::{constants, dict, stats::Stats};
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::{
+    Frame,
     layout::{Constraint, Direction, Layout},
-    style::{Color, Style},
+    style::{Color, Style, Stylize},
     symbols::border,
     text::{Line, Span, Text},
     widgets::{Block, Paragraph, Wrap},
-    Frame,
 };
 
 #[derive(Debug)]
@@ -91,7 +91,7 @@ impl WordArray {
     }
 
     fn quote(quote: &'static str) -> Self {
-        let mut temp = WordArray::default();
+        let mut temp = WordArray { data: Vec::new() };
         for el in quote.split_whitespace().map(|s| s.to_string()).into_iter() {
             temp.push_word(el);
         }
@@ -139,6 +139,7 @@ pub struct Typ {
     words_count: usize,
     current_word: usize,
     // kind: Config,
+    // end_time: Option<u32>,
     end: bool,
 }
 
@@ -157,6 +158,7 @@ impl Typ {
                     words_count: words_count,
                     current_word: 0,
                     // kind: *kind,
+                    // end_time: None,
                     end: false,
                 }
             }
@@ -171,6 +173,7 @@ impl Typ {
                     words_count: *words_count,
                     current_word: 0,
                     // kind: *kind,
+                    // end_time: None,
                     end: false,
                 }
             }
@@ -186,6 +189,7 @@ impl Typ {
                     words_count: words_count,
                     current_word: 0,
                     // kind: *kind,
+                    // end_time: None,
                     end: false,
                 }
             }
@@ -423,19 +427,12 @@ impl Typ {
     }
 
     pub fn render_text(&self, frame: &mut Frame) {
-        let title = Line::from(vec![
-            " Time: ".into(),
-            self.stats.time().to_string().into(),
-            "s ".into(),
-        ]);
-        let instructions = Line::from(vec![
-            " WPM: ".into(),
-            (self.stats.wpm() as u16).to_string().into(),
-            " ".into(),
-            " Accuracy: ".into(),
-            self.stats.get_accur(self.current_word).to_string().into(),
-            "% ".into(),
-        ]);
+        let title = Line::from(format!(" Time: {}s", self.stats.time()));
+        let instructions = Line::from(format!(
+            " WPM: {} Accuracy: {}",
+            self.stats.wpm() as u64,
+            self.stats.get_accur(self.current_word)
+        ));
         let block = Block::bordered()
             .title(title.centered())
             .title_bottom(instructions.centered())
@@ -467,7 +464,7 @@ impl Typ {
     }
 
     pub fn complete(&mut self) {
-        self.stats.end_time();
+        self.stats.set_end_time();
         self.end = true;
     }
 
@@ -493,6 +490,10 @@ impl Typ {
 
     pub fn is_end(&self) -> bool {
         self.end
+    }
+
+    pub fn is_time_end(&mut self, t: u32) -> bool {
+        if t <= self.stats.time() { true } else { false }
     }
 }
 

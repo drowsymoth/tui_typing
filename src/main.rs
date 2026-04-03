@@ -1,6 +1,7 @@
 use std::io;
 use std::time::{Duration, Instant};
 
+mod all_stats;
 mod constants;
 mod dict;
 mod menu;
@@ -8,11 +9,15 @@ mod stats;
 mod typing;
 
 use menu::{Menu, MenuCall};
-use stats::StatsCall;
+use stats::{Stats, StatsCall};
 use typing::{Config, Typ, TypCall};
+
+use core::mem::replace;
 
 use crossterm::event::{self, Event, KeyEventKind};
 use ratatui::{DefaultTerminal, Frame};
+
+use crate::all_stats::AllStats;
 
 fn main() -> io::Result<()> {
     ratatui::run(|terminal| App::default().run(terminal))
@@ -29,6 +34,7 @@ enum State {
 
 #[derive(Debug, Default)]
 pub struct App {
+    stats: all_stats::AllStats,
     state: State,
     game: Typ,
     menu: Menu,
@@ -38,9 +44,8 @@ pub struct App {
 
 impl App {
     pub fn run(&mut self, terminal: &mut DefaultTerminal) -> io::Result<()> {
-        // self.game = Typ::new(&self.config);
         self.menu = Menu::new();
-        // self.state = State::Typing;
+        self.stats = AllStats::new();
 
         let tick_rate = Duration::from_millis(1000 / constants::FPS as u64);
         let mut last_tick = Instant::now();
@@ -48,42 +53,23 @@ impl App {
         while !self.exit {
             terminal.draw(|frame| self.draw(frame))?;
 
-            match self.state {
-                State::Typing => {
-                    if self.game.is_end() {
-                        self.state = State::GameStats
-                    }
-                    if last_wpm_check.elapsed() >= Duration::from_secs(1) {
-                        self.game.stats.add_wpm_sample();
-                        last_wpm_check = Instant::now();
-                    }
-                    if let Config::Time(t, _) = self.config {
-                        if self.game.stats.is_time_end(t as u32) {
-                            self.game.complete();
-                            self.state = State::GameStats;
-                        }
+            if matches!(self.state, State::Typing) {
+                if self.game.is_end() {
+                    self.stats.push(replace(&mut self.game.stats, Stats::new()));
+                    self.state = State::GameStats
+                }
+                if last_wpm_check.elapsed() >= Duration::from_secs(1) {
+                    self.game.stats.add_wpm_sample();
+                    last_wpm_check = Instant::now();
+                }
+                if let Config::Time(t, _) = self.config {
+                    if self.game.is_time_end(t as u32) {
+                        self.game.complete();
+                        self.stats.push(replace(&mut self.game.stats, Stats::new()));
+                        self.state = State::GameStats;
                     }
                 }
-
-                _ => {}
             }
-            // if last_wpm_check.elapsed() >= Duration::from_secs(1) {
-            //     match self.state {
-            //         State::Typing => self.game.stats.add_wpm_sample(),
-            //         _ => {}
-            //     }
-            //     last_wpm_check = Instant::now();
-            // }
-
-            // match self.config {
-            //     Config::Time(t, _) => {
-            //         if self.game.stats.is_time_end(t as u32) {
-            //             self.game.complete();
-            //             self.state = State::GameStats;
-            //         }
-            //     }
-            //     _ => {}
-            // }
 
             let timeout = tick_rate
                 .checked_sub(last_tick.elapsed())
@@ -104,41 +90,37 @@ impl App {
         match self.state {
             State::Menu => self.menu.render_menu(frame),
             State::Typing => self.game.render_text(frame),
-            State::GameStats => self.game.stats.render_game_stats(frame),
-            // _ => panic!(),
+            State::GameStats => self.stats.render_last(frame),
         }
     }
 
     fn handle_events(&mut self) -> io::Result<()> {
         match event::read()? {
-            Event::Key(key_event) if key_event.kind == KeyEventKind::Press => {
-                match self.state {
-                    State::Typing => match self.game.handle_key_event(key_event) {
-                        TypCall::ToMenu => self.state = State::Menu,
-                        TypCall::Restart => self.game = Typ::new(&self.config),
-                        _ => {}
-                    },
-                    State::Menu => match self.menu.handle_key_event(key_event) {
-                        MenuCall::Exit => self.exit(),
-                        MenuCall::Start(s) => {
-                            self.config = s;
-                            self.game = Typ::new(&s);
-                            self.state = State::Typing;
-                        }
-                        MenuCall::None => {}
-                    },
-                    State::GameStats => match self.game.stats.handle_key_event(key_event) {
-                        StatsCall::ToMenu => self.state = State::Menu,
-                        StatsCall::Again => {
-                            self.game = Typ::new(&self.config);
-                            self.state = State::Typing
-                        }
-                        StatsCall::Exit => self.exit(),
-                        StatsCall::None => {}
-                    },
-                }
-                // self.handle_key_event(key_event)
-            }
+            Event::Key(key_event) if key_event.kind == KeyEventKind::Press => match self.state {
+                State::Typing => match self.game.handle_key_event(key_event) {
+                    TypCall::ToMenu => self.state = State::Menu,
+                    TypCall::Restart => self.game = Typ::new(&self.config),
+                    _ => {}
+                },
+                State::Menu => match self.menu.handle_key_event(key_event) {
+                    MenuCall::Exit => self.exit(),
+                    MenuCall::Start(s) => {
+                        self.config = s;
+                        self.game = Typ::new(&s);
+                        self.state = State::Typing;
+                    }
+                    MenuCall::None => {}
+                },
+                State::GameStats => match self.game.stats.handle_key_event(key_event) {
+                    StatsCall::ToMenu => self.state = State::Menu,
+                    StatsCall::Again => {
+                        self.game = Typ::new(&self.config);
+                        self.state = State::Typing
+                    }
+                    StatsCall::Exit => self.exit(),
+                    StatsCall::None => {}
+                },
+            },
             _ => {}
         };
         Ok(())
